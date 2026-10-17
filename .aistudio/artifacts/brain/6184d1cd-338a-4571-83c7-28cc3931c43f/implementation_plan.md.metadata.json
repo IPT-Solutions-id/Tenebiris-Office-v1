@@ -1,0 +1,6 @@
+{
+  "summary": "Plan for Tenebiris Office UI/Chat improvements:\n- Sidebar toggle implementation.\n- 50:50 vertical layout split (Workspace/Chat).\n- ChatInterface component: model selection, file upload, tag parsing, global history.\n- State management updates in officeStore.tsx.",
+  "updatedAt": "2026-10-16T20:49:24.600754788Z",
+  "requestFeedback": true,
+  "userFacing": true
+}

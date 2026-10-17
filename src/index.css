@@ -1,0 +1,103 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --bg-obsidian: #09090f;
+    --bg-charcoal: #14121c;
+    --bg-dark-purple: #241329;
+    --burgundy: #490d1b;
+    --crimson: #9e172c;
+    --blood-red: #d7263d;
+    --antique-gold: #c69245;
+    --ghost-white: #e8e4e9;
+    --cyber-cyan: #39c5cf;
+  }
+
+  body {
+    background-color: #09090f;
+    color: #e8e4e9;
+    font-family: 'Inter', sans-serif;
+  }
+
+  h1, h2, h3, .font-cinzel {
+    font-family: 'Cinzel', serif;
+    letter-spacing: 0.05em;
+  }
+
+  code, pre, .font-mono {
+    font-family: 'Fira Code', monospace;
+  }
+}
+
+/* Pixel Art Rendering */
+.pixelated {
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+/* Custom Gothic Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #0d0b14;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #3a111c;
+  border-radius: 2px;
+  border: 1px solid #9e172c33;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #9e172c;
+}
+
+/* Occult Glow Effects */
+.glow-crimson {
+  box-shadow: 0 0 15px rgba(215, 38, 61, 0.35);
+}
+
+.glow-crimson-lg {
+  box-shadow: 0 0 30px rgba(215, 38, 61, 0.45);
+}
+
+.text-glow-crimson {
+  text-shadow: 0 0 8px rgba(215, 38, 61, 0.6);
+}
+
+.text-glow-gold {
+  text-shadow: 0 0 8px rgba(198, 146, 69, 0.6);
+}
+
+.text-glow-cyan {
+  text-shadow: 0 0 8px rgba(57, 197, 207, 0.6);
+}
+
+.border-gothic {
+  border: 1px solid rgba(158, 23, 44, 0.4);
+}
+
+.border-gothic-gold {
+  border: 1px solid rgba(198, 146, 69, 0.4);
+}
+
+/* Pulsing occult animation */
+@keyframes occult-pulse {
+  0%, 100% {
+    opacity: 0.85;
+    transform: scale(1);
+    filter: drop-shadow(0 0 10px rgba(215, 38, 61, 0.5));
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.02);
+    filter: drop-shadow(0 0 22px rgba(215, 38, 61, 0.85));
+  }
+}
+
+.animate-occult {
+  animation: occult-pulse 3.5s ease-in-out infinite;
+}

@@ -1,0 +1,40 @@
+erDiagram
+    WORKSPACES ||--o{ AGENTS : contains
+    WORKSPACES ||--o{ DEPARTMENTS : organizes
+    WORKSPACES ||--o{ OFFICE_ZONES : defines
+    WORKSPACES ||--o{ TASKS : tracks
+    WORKSPACES ||--o{ WORKFLOWS : defines
+
+    OFFICE_ZONES ||--o{ WORKSTATIONS : contains
+    WORKSTATIONS ||--o{ OFFICE_OBJECTS : houses
+    AGENTS ||--o| WORKSTATIONS : occupies
+
+    DEPARTMENTS ||--o{ AGENTS : assigns
+    ROLES ||--o{ AGENTS : categorizes
+    ROLES ||--o{ ROLE_SKILLS : requires
+    SKILLS ||--o{ ROLE_SKILLS : maps
+    
+    AGENTS ||--o{ AGENT_PROFILES : versions
+    AGENTS ||--o{ AGENT_SKILLS : possesses
+    SKILLS ||--o{ AGENT_SKILLS : equips
+
+    INTEGRATIONS ||--o{ RUNTIME_AGENT_BINDINGS : connects
+    AGENTS ||--o| RUNTIME_AGENT_BINDINGS : binds
+
+    TASKS ||--o{ TASK_ASSIGNMENTS : assigns
+    AGENTS ||--o{ TASK_ASSIGNMENTS : receives
+    TASKS ||--o{ TASK_EXECUTIONS : runs
+    TASK_EXECUTIONS ||--o{ EXECUTION_EVENTS : emits
+    TASK_EXECUTIONS ||--o{ ARTIFACTS : produces
+
+    WORKFLOWS ||--o{ WORKFLOW_STEPS : consists_of
+    WORKFLOW_STEPS ||--o{ AGENTS : delegates_to
+    WORKFLOWS ||--o{ WORKFLOW_EXECUTIONS : executes
+
+    AGENTS ||--o{ MESSAGES : sends
+    AGENTS ||--o{ MESSAGES : receives
+    TASKS ||--o{ APPROVAL_REQUESTS : triggers
+    USERS ||--o{ APPROVAL_REQUESTS : resolves
+
+    USERS ||--o{ AUDIT_LOGS : records
+    USERS ||--o{ USER_SETTINGS : configures
