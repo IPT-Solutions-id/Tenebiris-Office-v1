@@ -6,7 +6,7 @@ import {type AgentDefinition, type ModelRecord, type TaskLifecycle, RuntimeStore
 import {buildOneshotArgs, buildSessionArgs} from './sessionManager';
 
 const HERMES_BIN = process.env.HERMES_BIN ?? '/opt/hermes/.venv/bin/hermes';
-const REQUEST_TIMEOUT_MS = 120_000;
+const REQUEST_TIMEOUT_MS = 25_000;
 
 type RunHermesCommand = (args: string[]) => Promise<string>;
 
