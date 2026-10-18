@@ -142,7 +142,16 @@ export const createProductionApp = ({
     memoryPolicy: {profile: 'read-write', project: 'read-write', agent: 'read-write', task: 'read-write'},
     profile: runtimeConfig.profile, sessionName: mrSunanSession.name, workspace: process.cwd(), status: 'READY',
   };
-  if (!runtimeStore.getAgent(defaultMrSunan.id)) runtimeStore.upsertAgent(defaultMrSunan);
+  const existingMrSunan = runtimeStore.getAgent(defaultMrSunan.id);
+  if (!existingMrSunan) {
+    runtimeStore.upsertAgent(defaultMrSunan);
+  } else if (existingMrSunan.modelBinding.primaryModelId === 'cx/gpt-5.6-sol[1m]') {
+    runtimeStore.upsertAgent({
+      ...existingMrSunan,
+      modelBinding: {...existingMrSunan.modelBinding, primaryModelId: runtimeConfig.defaultModel},
+      status: 'READY',
+    });
+  }
   const refreshModels = syncModels ?? (() => syncModelCatalog({
     store: runtimeStore,
     providerId: runtimeConfig.providerId,
