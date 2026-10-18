@@ -31,6 +31,33 @@ export type ChatMessageRecord = {
   createdAt: string;
 };
 
+export type SessionKind = 'main' | 'task' | 'council' | 'temporary';
+export type AgentSkillState = 'available' | 'assigned' | 'loaded' | 'created' | 'pending_approval' | 'failed_validation';
+export type LearningStage = 'gap_detected' | 'learning_task' | 'skill_draft' | 'sandbox' | 'validation' | 'review' | 'approval' | 'assignment' | 'active' | 'improvement';
+
+export type RunAuditRecord = {
+  runId: string;
+  agentId: string;
+  sessionId: string;
+  requestedModel: string;
+  resolvedModel: string;
+  fallbackUsed: boolean;
+  fallbackReason: string | null;
+  latencyMs: number | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  estimatedCost: number | null;
+  createdAt: string;
+};
+
+export type MemoryPolicyRecord = {
+  profile: 'none' | 'read' | 'read-write';
+  project: 'none' | 'read' | 'read-write';
+  agent: 'none' | 'read' | 'read-write';
+  task: 'none' | 'read' | 'read-write';
+  session: 'none' | 'read' | 'read-write';
+};
+
 export type AgentDefinition = {
   id: string;
   name: string;
@@ -88,6 +115,53 @@ export class RuntimeStore {
         agent_id TEXT PRIMARY KEY,
         profile TEXT NOT NULL,
         name TEXT NOT NULL UNIQUE,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS session_variants (
+        agent_id TEXT NOT NULL,
+        profile TEXT NOT NULL,
+        name TEXT NOT NULL UNIQUE,
+        kind TEXT NOT NULL,
+        parent_session TEXT,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (agent_id, name)
+      );
+      CREATE TABLE IF NOT EXISTS memory_policies (
+        agent_id TEXT PRIMARY KEY,
+        policy_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS run_audits (
+        run_id TEXT PRIMARY KEY,
+        agent_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        requested_model TEXT NOT NULL,
+        resolved_model TEXT NOT NULL,
+        fallback_used INTEGER NOT NULL,
+        fallback_reason TEXT,
+        latency_ms INTEGER,
+        input_tokens INTEGER,
+        output_tokens INTEGER,
+        estimated_cost REAL,
+        created_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS agent_skills (
+        agent_id TEXT NOT NULL,
+        skill_id TEXT NOT NULL,
+        skill_name TEXT NOT NULL,
+        state TEXT NOT NULL,
+        source TEXT NOT NULL,
+        assigned_at TEXT NOT NULL,
+        PRIMARY KEY (agent_id, skill_id)
+      );
+      CREATE TABLE IF NOT EXISTS learning_runs (
+        id TEXT PRIMARY KEY,
+        agent_id TEXT NOT NULL,
+        gap TEXT NOT NULL,
+        stage TEXT NOT NULL,
+        skill_id TEXT,
+        requires_approval INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS agents (
@@ -202,6 +276,73 @@ export class RuntimeStore {
     const row = this.database.prepare('SELECT * FROM agent_sessions WHERE agent_id = ?').get(agentId) as Record<string, unknown> | undefined;
     if (!row) return null;
     return {agentId: String(row.agent_id), profile: String(row.profile), name: String(row.name)};
+  }
+
+  ensureSessionVariant(session: SessionRecord & {kind: SessionKind; parentSession?: string}) {
+    this.database.prepare(`INSERT INTO session_variants (agent_id, profile, name, kind, parent_session, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(name) DO UPDATE SET profile=excluded.profile, kind=excluded.kind,
+      parent_session=excluded.parent_session, updated_at=excluded.updated_at`).run(
+      session.agentId, session.profile, session.name, session.kind, session.parentSession ?? null, new Date().toISOString());
+    return session;
+  }
+
+  listSessionVariants(agentId: string) {
+    return this.database.prepare('SELECT agent_id as agentId, profile, name, kind, parent_session as parentSession, updated_at as updatedAt FROM session_variants WHERE agent_id = ? ORDER BY name').all(agentId);
+  }
+
+  addRunAudit(audit: Omit<RunAuditRecord, 'createdAt'>) {
+    const createdAt = new Date().toISOString();
+    this.database.prepare(`INSERT INTO run_audits
+      (run_id, agent_id, session_id, requested_model, resolved_model, fallback_used, fallback_reason, latency_ms, input_tokens, output_tokens, estimated_cost, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      audit.runId, audit.agentId, audit.sessionId, audit.requestedModel, audit.resolvedModel,
+      audit.fallbackUsed ? 1 : 0, audit.fallbackReason, audit.latencyMs, audit.inputTokens,
+      audit.outputTokens, audit.estimatedCost, createdAt);
+    return {...audit, createdAt};
+  }
+
+  getRunAudit(runId: string) {
+    const row = this.database.prepare('SELECT * FROM run_audits WHERE run_id = ?').get(runId) as Record<string, unknown> | undefined;
+    if (!row) return null;
+    return {runId: String(row.run_id), agentId: String(row.agent_id), sessionId: String(row.session_id),
+      requestedModel: String(row.requested_model), resolvedModel: String(row.resolved_model), fallbackUsed: Boolean(row.fallback_used),
+      fallbackReason: row.fallback_reason === null ? null : String(row.fallback_reason), latencyMs: row.latency_ms == null ? null : Number(row.latency_ms),
+      inputTokens: row.input_tokens == null ? null : Number(row.input_tokens), outputTokens: row.output_tokens == null ? null : Number(row.output_tokens),
+      estimatedCost: row.estimated_cost == null ? null : Number(row.estimated_cost), createdAt: String(row.created_at)};
+  }
+
+  setMemoryPolicy(agentId: string, policy: MemoryPolicyRecord) {
+    this.database.prepare(`INSERT INTO memory_policies (agent_id, policy_json, updated_at) VALUES (?, ?, ?)
+      ON CONFLICT(agent_id) DO UPDATE SET policy_json=excluded.policy_json, updated_at=excluded.updated_at`).run(agentId, JSON.stringify(policy), new Date().toISOString());
+  }
+
+  getMemoryPolicy(agentId: string): MemoryPolicyRecord | null {
+    const row = this.database.prepare('SELECT policy_json FROM memory_policies WHERE agent_id = ?').get(agentId) as {policy_json: string} | undefined;
+    return row ? JSON.parse(row.policy_json) as MemoryPolicyRecord : null;
+  }
+
+  setAgentSkill(agentId: string, skill: {id: string; name: string; state: AgentSkillState; source: string}) {
+    this.database.prepare(`INSERT INTO agent_skills (agent_id, skill_id, skill_name, state, source, assigned_at) VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(agent_id, skill_id) DO UPDATE SET skill_name=excluded.skill_name, state=excluded.state, source=excluded.source, assigned_at=excluded.assigned_at`).run(
+      agentId, skill.id, skill.name, skill.state, skill.source, new Date().toISOString());
+  }
+
+  listAgentSkills(agentId: string) { return this.database.prepare('SELECT skill_id as id, skill_name as name, state, source, assigned_at as assignedAt FROM agent_skills WHERE agent_id = ? ORDER BY skill_name').all(agentId); }
+
+  createLearningRun(run: {id: string; agentId: string; gap: string; stage: LearningStage; skillId?: string; requiresApproval: boolean}) {
+    const now = new Date().toISOString();
+    this.database.prepare(`INSERT INTO learning_runs (id, agent_id, gap, stage, skill_id, requires_approval, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(run.id, run.agentId, run.gap, run.stage, run.skillId ?? null, run.requiresApproval ? 1 : 0, now, now);
+    return this.getLearningRun(run.id);
+  }
+
+  getLearningRun(id: string) {
+    const row = this.database.prepare('SELECT id, agent_id as agentId, gap, stage, skill_id as skillId, requires_approval as requiresApproval, created_at as createdAt, updated_at as updatedAt FROM learning_runs WHERE id = ?').get(id) as Record<string, unknown> | undefined;
+    if (!row) return null;
+    return {
+      id: String(row.id), agentId: String(row.agentId), gap: String(row.gap), stage: String(row.stage) as LearningStage,
+      skillId: row.skillId === null ? null : String(row.skillId), requiresApproval: Boolean(row.requiresApproval),
+      createdAt: String(row.createdAt), updatedAt: String(row.updatedAt),
+    };
   }
 
   upsertAgent(agent: AgentDefinition) {

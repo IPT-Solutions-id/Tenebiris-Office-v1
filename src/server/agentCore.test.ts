@@ -44,6 +44,23 @@ test('agent update versions soul, role, model, tools, and memory atomically', as
   store.close();
 });
 
+test('persists session variants, memory scopes, skill states, learning runs, and run audits', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'agent-runtime-'));
+  const store = new RuntimeStore(path.join(dir, 'runtime.sqlite'));
+  store.upsertAgent(mrSunan);
+  store.ensureSessionVariant({agentId: mrSunan.id, profile: 'tenebiris', name: 'mr-sunan-council', kind: 'council', parentSession: mrSunan.sessionName});
+  assert.equal(store.listSessionVariants(mrSunan.id).length, 1);
+  store.setMemoryPolicy(mrSunan.id, {profile: 'read', project: 'read-write', agent: 'read-write', task: 'read-write', session: 'read-write'});
+  assert.equal(store.getMemoryPolicy(mrSunan.id)?.profile, 'read');
+  store.setAgentSkill(mrSunan.id, {id: 'research', name: 'Research', state: 'assigned', source: 'profile'});
+  assert.equal(store.listAgentSkills(mrSunan.id)[0].state, 'assigned');
+  const learning = store.createLearningRun({id: 'learn_1', agentId: mrSunan.id, gap: 'Missing research skill', stage: 'gap_detected', requiresApproval: true});
+  assert.equal(learning?.stage, 'gap_detected');
+  const audit = store.addRunAudit({runId: 'run_audit_1', agentId: mrSunan.id, sessionId: mrSunan.sessionName, requestedModel: 'primary', resolvedModel: 'fallback', fallbackUsed: true, fallbackReason: 'primary unavailable', latencyMs: 42, inputTokens: 10, outputTokens: 20, estimatedCost: 0.01});
+  assert.equal(store.getRunAudit(audit.runId)?.fallbackUsed, true);
+  store.close();
+});
+
 test('agent definition contains complete creation policy sections', async () => {
   assert.ok(mrSunan.skills.length > 0);
   assert.equal(mrSunan.role.jobTypes[0], 'orchestration');

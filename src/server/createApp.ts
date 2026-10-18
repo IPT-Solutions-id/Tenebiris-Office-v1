@@ -261,6 +261,53 @@ export const createProductionApp = ({
     res.json({agentId: req.params.id, versions: runtimeStore.listDefinitionVersions(req.params.id)});
   });
 
+  app.get('/api/agents/:id/sessions', (req, res) => {
+    res.json({agentId: req.params.id, sessions: runtimeStore.listSessionVariants(req.params.id)});
+  });
+
+  app.post('/api/agents/:id/sessions', (req, res) => {
+    const agent = runtimeStore.getAgent(req.params.id);
+    if (!agent) return res.status(404).json({error: 'Agent not found'});
+    const kind = req.body?.kind as 'task' | 'council' | 'temporary';
+    if (!['task', 'council', 'temporary'].includes(kind)) return res.status(400).json({error: 'kind must be task, council, or temporary'});
+    const name = typeof req.body?.name === 'string' ? req.body.name.trim() : `${agent.id}-${kind}-${Date.now()}`;
+    const session = runtimeStore.ensureSessionVariant({agentId: agent.id, profile: agent.profile, name, kind, parentSession: agent.sessionName});
+    res.status(201).json(session);
+  });
+
+  app.get('/api/agents/:id/memory-policy', (req, res) => {
+    const agent = runtimeStore.getAgent(req.params.id);
+    if (!agent) return res.status(404).json({error: 'Agent not found'});
+    res.json({agentId: agent.id, policy: runtimeStore.getMemoryPolicy(agent.id) ?? {...agent.memoryPolicy, session: 'read-write'}});
+  });
+
+  app.get('/api/agents/:id/skills', (req, res) => {
+    res.json({agentId: req.params.id, skills: runtimeStore.listAgentSkills(req.params.id)});
+  });
+
+  app.post('/api/agents/:id/skills', (req, res) => {
+    if (!runtimeStore.getAgent(req.params.id)) return res.status(404).json({error: 'Agent not found'});
+    if (!req.body?.id || !req.body?.name) return res.status(400).json({error: 'skill id and name are required'});
+    runtimeStore.setAgentSkill(req.params.id, {
+      id: String(req.body.id), name: String(req.body.name), state: req.body.state ?? 'assigned', source: req.body.source ?? 'profile',
+    });
+    res.status(201).json({skills: runtimeStore.listAgentSkills(req.params.id)});
+  });
+
+  app.post('/api/agents/:id/learning-runs', (req, res) => {
+    if (!runtimeStore.getAgent(req.params.id)) return res.status(404).json({error: 'Agent not found'});
+    const gap = typeof req.body?.gap === 'string' ? req.body.gap.trim() : '';
+    if (!gap) return res.status(400).json({error: 'gap is required'});
+    const run = runtimeStore.createLearningRun({id: `learn_${Date.now()}`, agentId: req.params.id, gap, stage: 'gap_detected', skillId: req.body.skillId, requiresApproval: true});
+    res.status(201).json(run);
+  });
+
+  app.get('/api/run-audits/:id', (req, res) => {
+    const audit = runtimeStore.getRunAudit(req.params.id);
+    if (!audit) return res.status(404).json({error: 'Run audit not found'});
+    res.json(audit);
+  });
+
   app.get('/api/task-runs/:id', (req, res) => {
     const run = runtimeStore.getTaskRun(req.params.id);
     if (!run) return res.status(404).json({error: 'Task run not found'});
@@ -395,6 +442,8 @@ export const createProductionApp = ({
       if (agent) runtimeStore.createTaskRun({
         id: taskRunId, agentId: agent.id, sessionId: taskSession, taskTitle: title, definition: agent,
       });
+      const startedAt = Date.now();
+      const requestedModel = model;
       const response = await runHermesCommand(buildSessionArgs({
         profile: mrSunanSession.profile,
         sessionName: taskSession,
@@ -412,7 +461,13 @@ export const createProductionApp = ({
       runtimeStore.addChatMessage({
         sessionId: taskSession, agentId: mrSunanSession.agentId, role: 'assistant', content: response, model,
       });
+      runtimeStore.addRunAudit({
+        runId: taskRunId, agentId: mrSunanSession.agentId, sessionId: taskSession,
+        requestedModel, resolvedModel: model, fallbackUsed: false, fallbackReason: null,
+        latencyMs: Date.now() - startedAt, inputTokens: null, outputTokens: null, estimatedCost: null,
+      });
       res.json({
+        runId: taskRunId,
         status: 'completed',
         response,
         runtime: 'Hermes',
