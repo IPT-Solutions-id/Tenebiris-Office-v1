@@ -24,3 +24,10 @@ export const buildSessionArgs = ({
   if (skills.length) args.push('-s', skills.join(','));
   return args;
 };
+
+export const buildOneshotArgs = ({profile, prompt, model, skills = []}: Omit<BuildSessionArgsOptions, 'sessionName'>) => {
+  const args = ['-p', profile, 'chat', '-q', prompt, '--oneshot', '-Q', '--source', 'tenebiris-office'];
+  if (model) args.push('-m', model);
+  if (skills.length) args.push('-s', skills.join(','));
+  return args;
+};

@@ -3,7 +3,7 @@ import path from 'node:path';
 import express, {type Express, type Request, type Response} from 'express';
 import {syncModelCatalog} from './modelRegistry';
 import {type AgentDefinition, type ModelRecord, type TaskLifecycle, RuntimeStore} from './runtimeStore';
-import {buildSessionArgs} from './sessionManager';
+import {buildOneshotArgs, buildSessionArgs} from './sessionManager';
 
 const HERMES_BIN = process.env.HERMES_BIN ?? '/opt/hermes/.venv/bin/hermes';
 const REQUEST_TIMEOUT_MS = 120_000;
@@ -504,23 +504,29 @@ export const createProductionApp = ({
         sessionId: mrSunanSession.name, agentId: mrSunanSession.agentId, role: 'user', content: prompt, model: null,
       });
       const model = agent?.modelBinding.primaryModelId ?? runtimeConfig.defaultModel;
-      const response = await runHermesCommand(buildSessionArgs({
-        profile: mrSunanSession.profile,
-        sessionName: mrSunanSession.name,
-        prompt,
-        model,
-      }));
+      let response: string;
+      let session = mrSunanSession.name;
+      try {
+        response = await Promise.race([
+          runHermesCommand(buildSessionArgs({profile: mrSunanSession.profile, sessionName: mrSunanSession.name, prompt, model})),
+          new Promise<string>((_, reject) => setTimeout(() => reject(new Error('Persistent session timed out')), 30_000)),
+        ]);
+      } catch (sessionError) {
+        response = await runHermesCommand(buildOneshotArgs({profile: mrSunanSession.profile, prompt, model}));
+        session = `${mrSunanSession.name}-recovery`;
+        runtimeStore.addChatMessage({
+          sessionId: session, agentId: mrSunanSession.agentId, role: 'user', content: prompt, model: null,
+        });
+        runtimeStore.addChatMessage({
+          sessionId: session, agentId: mrSunanSession.agentId, role: 'assistant', content: response, model,
+        });
+        res.json({status: 'completed', response, runtime: 'Hermes', profile: mrSunanSession.profile, session, model, recovered: true, recoveryReason: sessionError instanceof Error ? sessionError.message : String(sessionError)});
+        return;
+      }
       runtimeStore.addChatMessage({
         sessionId: mrSunanSession.name, agentId: mrSunanSession.agentId, role: 'assistant', content: response, model,
       });
-      res.json({
-        status: 'completed',
-        response,
-        runtime: 'Hermes',
-        profile: mrSunanSession.profile,
-        session: mrSunanSession.name,
-        model,
-      });
+      res.json({status: 'completed', response, runtime: 'Hermes', profile: mrSunanSession.profile, session, model});
     } catch (error) {
       sendFailure(res, error);
     }

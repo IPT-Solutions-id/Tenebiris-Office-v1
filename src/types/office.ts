@@ -150,7 +150,7 @@ export interface A2AMessage {
   timestamp: string;
   content: string;
   taskRef?: string;
-  status: 'sent' | 'delivered' | 'read';
+  status: 'sent' | 'delivered' | 'read' | 'failed';
   requiresApproval?: boolean;
   mentions?: string[];
 }

@@ -233,7 +233,19 @@ export const OfficeProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setMessages(prev => [...prev, replyMsg]);
       addAuditLog('HERMES_GATE', 'A2A_RESPONSE', 'Live Hermes response received.', 'INFO');
     }).catch(error => {
-      addAuditLog('HERMES_GATE', 'A2A_FAILURE', error instanceof Error ? error.message : String(error), 'ERROR');
+      const detail = error instanceof Error ? error.message : String(error);
+      const failureMsg: A2AMessage = {
+        id: `msg_error_${Date.now()}`,
+        senderId: 'hermes_gate',
+        senderName: 'Hermes Gateway',
+        receiverId: 'user_high_priest',
+        receiverName: 'High Priest (You)',
+        timestamp: new Date().toTimeString().substring(0, 5),
+        content: `Hermes tidak merespons: ${detail}`,
+        status: 'failed',
+      };
+      setMessages(prev => [...prev, failureMsg]);
+      addAuditLog('HERMES_GATE', 'A2A_FAILURE', detail, 'ERROR');
     });
   };
 
