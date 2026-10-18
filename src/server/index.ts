@@ -16,7 +16,7 @@ const runtimeConfig: RuntimeConfig = {
   providerName: '9Router',
   baseUrl: process.env.TENEBIRIS_9ROUTER_BASE_URL ?? 'https://tenebiris9.ipt.solutions/v1',
   apiKey: process.env.HERMES_CUSTOM_TENEBIRIS9_IPT_SOLUTIONS_API_KEY ?? '',
-  defaultModel: process.env.TENEBIRIS_DEFAULT_MODEL ?? 'cx/gpt-5.6-sol[1m]',
+  defaultModel: process.env.TENEBIRIS_DEFAULT_MODEL ?? 'cx/gpt-5.6-luna[1m]',
 };
 
 if (!runtimeConfig.apiKey) {
