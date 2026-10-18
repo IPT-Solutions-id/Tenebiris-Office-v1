@@ -34,6 +34,26 @@ export type ChatMessageRecord = {
 export type SessionKind = 'main' | 'task' | 'council' | 'temporary';
 export type AgentSkillState = 'available' | 'assigned' | 'loaded' | 'created' | 'pending_approval' | 'failed_validation';
 export type LearningStage = 'gap_detected' | 'learning_task' | 'skill_draft' | 'sandbox' | 'validation' | 'review' | 'approval' | 'assignment' | 'active' | 'improvement';
+export type SkillScope = 'private_agent' | 'project' | 'profile' | 'global';
+export type SkillRegistryStatus = 'draft' | 'validated' | 'promoted' | 'restricted' | 'failed';
+export type TaskLifecycle = 'DRAFT' | 'QUEUED' | 'ASSIGNED' | 'RUNNING' | 'WAITING_APPROVAL' | 'REVIEW' | 'COMPLETED' | 'FAILED' | 'BLOCKED' | 'CANCELLED';
+
+export type SkillRegistryRecord = {
+  id: string; version: number; owner: string; scope: SkillScope; status: SkillRegistryStatus;
+  dependencies: string[]; triggers: string[]; procedure: string[]; validation: string[];
+  usageCount: number; evidence: string[]; createdAt: string; updatedAt: string;
+};
+
+export type WorkspacePolicyRecord = {
+  agentId: string; workspace: string; filesystemRoots: string[]; gitPermissions: string[];
+  deploymentPermissions: string[]; status: 'READY' | 'MISSING' | 'LOCKED'; updatedAt: string;
+};
+
+export type TaskRecord = {
+  id: string; agentId: string; model: string; skills: string[]; tools: string[]; sessionId: string;
+  workspace: string; status: TaskLifecycle; logs: string[]; artifacts: string[];
+  approval: string | null; evidence: string[]; result: string | null; createdAt: string;
+};
 
 export type RunAuditRecord = {
   runId: string;
@@ -164,6 +184,23 @@ export class RuntimeStore {
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS skill_registry (
+        id TEXT PRIMARY KEY, version INTEGER NOT NULL, owner TEXT NOT NULL, scope TEXT NOT NULL,
+        status TEXT NOT NULL, dependencies_json TEXT NOT NULL, triggers_json TEXT NOT NULL,
+        procedure_json TEXT NOT NULL, validation_json TEXT NOT NULL, usage_count INTEGER NOT NULL,
+        evidence_json TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS workspace_policies (
+        agent_id TEXT PRIMARY KEY, workspace TEXT NOT NULL, filesystem_roots_json TEXT NOT NULL,
+        git_permissions_json TEXT NOT NULL, deployment_permissions_json TEXT NOT NULL,
+        status TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS task_records (
+        id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, model TEXT NOT NULL, skills_json TEXT NOT NULL,
+        tools_json TEXT NOT NULL, session_id TEXT NOT NULL, workspace TEXT NOT NULL, status TEXT NOT NULL,
+        logs_json TEXT NOT NULL, artifacts_json TEXT NOT NULL, approval TEXT, evidence_json TEXT NOT NULL,
+        result TEXT, created_at TEXT NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS agents (
         id TEXT PRIMARY KEY,
         definition_json TEXT NOT NULL,
@@ -202,6 +239,65 @@ export class RuntimeStore {
       );
       CREATE INDEX IF NOT EXISTS idx_task_runs_agent ON task_runs (agent_id, created_at);
     `);
+  }
+
+  upsertSkill(skill: Omit<SkillRegistryRecord, 'createdAt' | 'updatedAt'>) {
+    const now = new Date().toISOString();
+    this.database.prepare(`INSERT INTO skill_registry
+      (id, version, owner, scope, status, dependencies_json, triggers_json, procedure_json, validation_json, usage_count, evidence_json, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET version=excluded.version, owner=excluded.owner, scope=excluded.scope, status=excluded.status,
+      dependencies_json=excluded.dependencies_json, triggers_json=excluded.triggers_json, procedure_json=excluded.procedure_json,
+      validation_json=excluded.validation_json, usage_count=excluded.usage_count, evidence_json=excluded.evidence_json, updated_at=excluded.updated_at`).run(
+      skill.id, skill.version, skill.owner, skill.scope, skill.status, JSON.stringify(skill.dependencies), JSON.stringify(skill.triggers),
+      JSON.stringify(skill.procedure), JSON.stringify(skill.validation), skill.usageCount, JSON.stringify(skill.evidence), now, now);
+    return this.getSkill(skill.id);
+  }
+
+  getSkill(id: string): SkillRegistryRecord | null {
+    const row = this.database.prepare('SELECT * FROM skill_registry WHERE id = ?').get(id) as Record<string, unknown> | undefined;
+    if (!row) return null;
+    return {id: String(row.id), version: Number(row.version), owner: String(row.owner), scope: String(row.scope) as SkillScope,
+      status: String(row.status) as SkillRegistryStatus, dependencies: JSON.parse(String(row.dependencies_json)), triggers: JSON.parse(String(row.triggers_json)),
+      procedure: JSON.parse(String(row.procedure_json)), validation: JSON.parse(String(row.validation_json)), usageCount: Number(row.usage_count),
+      evidence: JSON.parse(String(row.evidence_json)), createdAt: String(row.created_at), updatedAt: String(row.updated_at)};
+  }
+
+  listSkills() { return this.database.prepare('SELECT * FROM skill_registry ORDER BY id').all().map(row => this.getSkill(String((row as Record<string, unknown>).id))); }
+
+  setWorkspacePolicy(policy: Omit<WorkspacePolicyRecord, 'updatedAt'>) {
+    const updatedAt = new Date().toISOString();
+    this.database.prepare(`INSERT INTO workspace_policies
+      (agent_id, workspace, filesystem_roots_json, git_permissions_json, deployment_permissions_json, status, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(agent_id) DO UPDATE SET workspace=excluded.workspace,
+      filesystem_roots_json=excluded.filesystem_roots_json, git_permissions_json=excluded.git_permissions_json,
+      deployment_permissions_json=excluded.deployment_permissions_json, status=excluded.status, updated_at=excluded.updated_at`).run(
+      policy.agentId, policy.workspace, JSON.stringify(policy.filesystemRoots), JSON.stringify(policy.gitPermissions), JSON.stringify(policy.deploymentPermissions), policy.status, updatedAt);
+    return this.getWorkspacePolicy(policy.agentId);
+  }
+
+  getWorkspacePolicy(agentId: string): WorkspacePolicyRecord | null {
+    const row = this.database.prepare('SELECT * FROM workspace_policies WHERE agent_id = ?').get(agentId) as Record<string, unknown> | undefined;
+    return row ? {agentId: String(row.agent_id), workspace: String(row.workspace), filesystemRoots: JSON.parse(String(row.filesystem_roots_json)), gitPermissions: JSON.parse(String(row.git_permissions_json)), deploymentPermissions: JSON.parse(String(row.deployment_permissions_json)), status: String(row.status) as WorkspacePolicyRecord['status'], updatedAt: String(row.updated_at)} : null;
+  }
+
+  createTaskRecord(task: Omit<TaskRecord, 'createdAt'>) {
+    const createdAt = new Date().toISOString();
+    this.database.prepare(`INSERT INTO task_records
+      (id, agent_id, model, skills_json, tools_json, session_id, workspace, status, logs_json, artifacts_json, approval, evidence_json, result, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(task.id, task.agentId, task.model, JSON.stringify(task.skills), JSON.stringify(task.tools), task.sessionId, task.workspace, task.status, JSON.stringify(task.logs), JSON.stringify(task.artifacts), task.approval, JSON.stringify(task.evidence), task.result, createdAt);
+    return this.getTaskRecord(task.id);
+  }
+
+  updateTaskStatus(id: string, status: TaskLifecycle, result: string | null = null) {
+    this.database.prepare('UPDATE task_records SET status = ?, result = ? WHERE id = ?').run(status, result, id);
+    return this.getTaskRecord(id);
+  }
+
+  getTaskRecord(id: string): TaskRecord | null {
+    const row = this.database.prepare('SELECT * FROM task_records WHERE id = ?').get(id) as Record<string, unknown> | undefined;
+    if (!row) return null;
+    return {id: String(row.id), agentId: String(row.agent_id), model: String(row.model), skills: JSON.parse(String(row.skills_json)), tools: JSON.parse(String(row.tools_json)), sessionId: String(row.session_id), workspace: String(row.workspace), status: String(row.status) as TaskLifecycle, logs: JSON.parse(String(row.logs_json)), artifacts: JSON.parse(String(row.artifacts_json)), approval: row.approval === null ? null : String(row.approval), evidence: JSON.parse(String(row.evidence_json)), result: row.result === null ? null : String(row.result), createdAt: String(row.created_at)};
   }
 
   upsertProvider(provider: ProviderRecord) {

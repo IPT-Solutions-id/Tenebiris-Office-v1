@@ -2,7 +2,7 @@ import {spawn, type ChildProcess} from 'node:child_process';
 import path from 'node:path';
 import express, {type Express, type Request, type Response} from 'express';
 import {syncModelCatalog} from './modelRegistry';
-import {type AgentDefinition, type ModelRecord, RuntimeStore} from './runtimeStore';
+import {type AgentDefinition, type ModelRecord, type TaskLifecycle, RuntimeStore} from './runtimeStore';
 import {buildSessionArgs} from './sessionManager';
 
 const HERMES_BIN = process.env.HERMES_BIN ?? '/opt/hermes/.venv/bin/hermes';
@@ -220,6 +220,91 @@ export const createProductionApp = ({
 
   app.get('/api/agents', (_req, res) => {
     res.json({agents: runtimeStore.listAgents()});
+  });
+
+  app.get('/api/skills/registry', (_req, res) => {
+    res.json({skills: runtimeStore.listSkills()});
+  });
+
+  app.post('/api/skills/registry', (req, res) => {
+    if (!req.body?.id || !req.body?.owner) return res.status(400).json({error: 'skill id and owner are required'});
+    const skill = runtimeStore.upsertSkill({
+      id: String(req.body.id), version: Number(req.body.version ?? 1), owner: String(req.body.owner),
+      scope: req.body.scope ?? 'private_agent', status: req.body.status ?? 'draft',
+      dependencies: Array.isArray(req.body.dependencies) ? req.body.dependencies.map(String) : [],
+      triggers: Array.isArray(req.body.triggers) ? req.body.triggers.map(String) : [],
+      procedure: Array.isArray(req.body.procedure) ? req.body.procedure.map(String) : [],
+      validation: Array.isArray(req.body.validation) ? req.body.validation.map(String) : [],
+      usageCount: Number(req.body.usageCount ?? 0), evidence: Array.isArray(req.body.evidence) ? req.body.evidence.map(String) : [],
+    });
+    res.status(201).json(skill);
+  });
+
+  app.get('/api/workspaces/:agentId', (req, res) => {
+    const policy = runtimeStore.getWorkspacePolicy(req.params.agentId);
+    if (!policy) return res.status(404).json({error: 'Workspace policy not found'});
+    res.json(policy);
+  });
+
+  app.put('/api/workspaces/:agentId', (req, res) => {
+    const agent = runtimeStore.getAgent(req.params.agentId);
+    if (!agent) return res.status(404).json({error: 'Agent not found'});
+    const policy = runtimeStore.setWorkspacePolicy({
+      agentId: agent.id, workspace: String(req.body?.workspace ?? agent.workspace),
+      filesystemRoots: Array.isArray(req.body?.filesystemRoots) ? req.body.filesystemRoots.map(String) : [agent.workspace],
+      gitPermissions: Array.isArray(req.body?.gitPermissions) ? req.body.gitPermissions.map(String) : [],
+      deploymentPermissions: Array.isArray(req.body?.deploymentPermissions) ? req.body.deploymentPermissions.map(String) : [],
+      status: req.body?.status ?? 'READY',
+    });
+    res.json(policy);
+  });
+
+  app.get('/api/tasks/:id', (req, res) => {
+    const task = runtimeStore.getTaskRecord(req.params.id);
+    if (!task) return res.status(404).json({error: 'Task not found'});
+    res.json(task);
+  });
+
+  app.post('/api/tasks', (req, res) => {
+    const agent = runtimeStore.getAgent(String(req.body?.agentId));
+    if (!agent) return res.status(404).json({error: 'Agent not found'});
+    const task = runtimeStore.createTaskRecord({
+      id: `task_${Date.now()}`, agentId: agent.id, model: agent.modelBinding.primaryModelId,
+      skills: agent.skills.map(skill => skill.id), tools: agent.toolPolicy.allowed,
+      sessionId: agent.sessionName, workspace: agent.workspace, status: 'DRAFT', logs: [], artifacts: [],
+      approval: null, evidence: [], result: null,
+    });
+    res.status(201).json(task);
+  });
+
+  app.patch('/api/tasks/:id/status', (req, res) => {
+    const status = req.body?.status as TaskLifecycle;
+    const allowed = ['DRAFT', 'QUEUED', 'ASSIGNED', 'RUNNING', 'WAITING_APPROVAL', 'REVIEW', 'COMPLETED', 'FAILED', 'BLOCKED', 'CANCELLED'];
+    if (!allowed.includes(status)) return res.status(400).json({error: 'Invalid task status'});
+    const task = runtimeStore.updateTaskStatus(req.params.id, status, req.body?.result ?? null);
+    if (!task) return res.status(404).json({error: 'Task not found'});
+    res.json(task);
+  });
+
+  app.get('/api/runtime/status/detail', (_req, res) => {
+    const provider = runtimeStore.getProvider(runtimeConfig.providerId);
+    const agent = runtimeStore.getAgent('agent_mr_sunan');
+    res.json({
+      profile: {name: runtimeConfig.profile, status: provider?.status === 'connected' ? 'CONNECTED' : 'UNAVAILABLE'},
+      provider: {name: runtimeConfig.providerName, status: provider?.status === 'connected' ? 'CONNECTED' : 'UNAVAILABLE'},
+      model: {requested: agent?.modelBinding.primaryModelId ?? runtimeConfig.defaultModel, status: runtimeStore.listModels(runtimeConfig.providerId).length ? 'AVAILABLE' : 'UNAVAILABLE'},
+      session: {name: mrSunanSession.name, status: 'ACTIVE'},
+      agentHeartbeat: {status: agent?.status === 'READY' ? 'ONLINE' : 'OFFLINE'},
+      skills: {status: agent ? 'VALID' : 'UNKNOWN'},
+      workspace: {path: agent?.workspace ?? process.cwd(), status: agent ? 'READY' : 'MISSING'},
+      task: {status: 'IDLE'},
+    });
+  });
+
+  app.get('/api/agents/:id/tools-policy', (req, res) => {
+    const agent = runtimeStore.getAgent(req.params.id);
+    if (!agent) return res.status(404).json({error: 'Agent not found'});
+    res.json({agentId: agent.id, tools: agent.toolPolicy, approval: agent.approvalPolicy, workspace: runtimeStore.getWorkspacePolicy(agent.id)});
   });
 
   app.get('/api/agents/:id', (req, res) => {
