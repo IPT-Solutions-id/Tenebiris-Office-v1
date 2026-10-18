@@ -16,8 +16,6 @@ export const Header: React.FC<{
   sidebarOpen?: boolean;
 }> = ({ onToggleSidebar, onToggleInspector, sidebarOpen }) => {
   const {
-    isDemoMode,
-    toggleMode,
     agents,
     tasks,
     skills,
@@ -106,28 +104,11 @@ export const Header: React.FC<{
           </span>
         </button>
 
-        {/* Live / Demo Mode Switcher */}
+        {/* Live runtime status */}
         <div className="flex bg-[#14121C] border border-[#9E172C]/40 rounded p-0.5">
-          <button
-            onClick={() => toggleMode(false)}
-            className={`px-3 py-1 rounded text-[11px] font-semibold transition-all ${
-              !isDemoMode
-                ? 'bg-[#9E172C] text-[#E8E4E9] shadow-[0_0_8px_rgba(215,38,61,0.5)]'
-                : 'text-[#A69EA9] hover:text-[#E8E4E9]'
-            }`}
-          >
-            Live Mode
-          </button>
-          <button
-            onClick={() => toggleMode(true)}
-            className={`px-3 py-1 rounded text-[11px] font-semibold transition-all ${
-              isDemoMode
-                ? 'bg-[#9E172C] text-[#E8E4E9] shadow-[0_0_8px_rgba(215,38,61,0.5)]'
-                : 'text-[#A69EA9] hover:text-[#E8E4E9]'
-            }`}
-          >
-            Demo Mode
-          </button>
+          <span className="px-3 py-1 rounded text-[11px] font-semibold bg-[#9E172C] text-[#E8E4E9] shadow-[0_0_8px_rgba(215,38,61,0.5)]">
+            Live Runtime
+          </span>
         </div>
       </div>
 
@@ -165,8 +146,8 @@ export const Header: React.FC<{
         >
           <Sparkles className="w-3.5 h-3.5 text-[#39C5CF]" />
           <div>
-            <span className="font-bold text-[#E8E4E9]">46 Skills</span>
-            <span className="hidden lg:inline text-[10px] text-[#39C5CF] ml-1.5 font-mono">(Active)</span>
+            <span className="font-bold text-[#E8E4E9]">{skills.length} Skills</span>
+            <span className="hidden lg:inline text-[10px] text-[#39C5CF] ml-1.5 font-mono">(Live)</span>
           </div>
         </div>
 

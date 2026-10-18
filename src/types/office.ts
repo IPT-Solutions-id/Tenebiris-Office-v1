@@ -152,7 +152,7 @@ export interface HermesState {
   latencyMs: number;
   lastPing: string;
   activeModel: string;
-  bindingStatus: 'BOUND' | 'PENDING' | 'DISCONNECTED';
+  bindingStatus: 'BOUND' | 'PENDING' | 'DISCONNECTED' | 'UNVERIFIED';
   capabilities: HermesCapability[];
 }
 

@@ -8,24 +8,11 @@ export const OccultSettingsView: React.FC = () => {
     setTargetFps,
     effectsEnabled,
     setEffectsEnabled,
-    toggleMode,
-    isDemoMode,
   } = useOffice();
 
   const [soundEnabled, setSoundEnabled] = useState<boolean>(false);
   const [resetMessage, setResetMessage] = useState<string | null>(null);
 
-  const handleResetToMrSunan = () => {
-    toggleMode(false);
-    setResetMessage('Reset to Greenfield Core: Mr Sunan bound as sole Chief AI Orchestrator.');
-    setTimeout(() => setResetMessage(null), 3000);
-  };
-
-  const handleLoadDemoGuild = () => {
-    toggleMode(true);
-    setResetMessage('Loaded Full 8-Agent Guild for chamber inspection.');
-    setTimeout(() => setResetMessage(null), 3000);
-  };
 
   return (
     <div className="h-full flex flex-col p-6 overflow-y-auto bg-[#09090F] select-none">
@@ -139,22 +126,13 @@ export const OccultSettingsView: React.FC = () => {
             </h3>
           </div>
           <p className="text-xs text-[#A69EA9] mb-4 leading-relaxed">
-            Switch between strictly Greenfield V1.0 mode (Mr Sunan as sole primary Hermes agent) and Demo Mode (full 8-agent guild for visual verification).
+            Live runtime mode is enforced. Mr Sunan remains the primary orchestrator; agent bindings are shown only after Hermes verification.
           </p>
 
           <div className="flex flex-wrap gap-3">
-            <button
-              onClick={handleResetToMrSunan}
-              className="px-4 py-2 rounded bg-[#490D1B] hover:bg-[#9E172C] text-[#E8E4E9] text-xs font-semibold border border-[#9E172C] transition-all"
-            >
-              Strict Greenfield Mode (Mr Sunan Only)
-            </button>
-            <button
-              onClick={handleLoadDemoGuild}
-              className="px-4 py-2 rounded bg-[#14121C] hover:bg-[#2A1828] text-[#39C5CF] text-xs font-semibold border border-[#39C5CF]/40 transition-all"
-            >
-              Load Demo Guild (Full 8 Agents)
-            </button>
+            <span className="px-4 py-2 rounded bg-[#490D1B] text-[#E8E4E9] text-xs font-semibold border border-[#9E172C]">
+              Live Runtime Enforced
+            </span>
           </div>
 
           {resetMessage && (
