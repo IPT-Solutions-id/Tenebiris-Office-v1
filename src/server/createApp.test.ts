@@ -3,6 +3,7 @@ import {mkdtemp, writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import {EventEmitter} from 'node:events';
 import {createProductionApp} from './createApp';
 import {RuntimeStore} from './runtimeStore';
 
@@ -13,6 +14,27 @@ const withServer = async (run: (baseUrl: string, commands: string[][]) => Promis
   await writeFile(path.join(distDir, 'index.html'), '<title>Tenebiris Production</title>');
   const commands: string[][] = [];
 
+  const spawnHermesProcess = (args: string[]) => {
+    commands.push(args);
+    const child = new EventEmitter() as import('node:child_process').ChildProcess & {
+      stdout: EventEmitter; stderr: EventEmitter; killed: boolean; kill: () => boolean;
+    };
+    const stdout = new EventEmitter();
+    const stderr = new EventEmitter();
+    child.stdout = stdout as never;
+    child.stderr = stderr as never;
+    child.killed = false;
+    child.kill = () => {
+      child.killed = true;
+      return true;
+    };
+    queueMicrotask(() => {
+      stdout.emit('data', Buffer.from('STREAM_PHASE3_OK'));
+      child.emit('close', 0);
+    });
+    return child;
+  };
+
   const app = createProductionApp({
     distDir,
     runHermesCommand: async args => {
@@ -21,6 +43,7 @@ const withServer = async (run: (baseUrl: string, commands: string[][]) => Promis
       if (args.some(arg => arg.includes('HERMES_HEALTH_OK'))) return 'HERMES_HEALTH_OK';
       return 'TENEBIRIS_PRODUCTION_OK';
     },
+    spawnHermesProcess,
     runtimeStore,
     runtimeConfig: {
       profile: 'tenebiris',
@@ -86,6 +109,57 @@ test('sends chat through the production bridge', async () => {
       '--continue', 'mr-sunan-main', '--create-if-missing',
       '--source', 'tenebiris-office', '-m', 'anthropic/claude-test',
     ]);
+  });
+});
+
+test('persists chat history per session', () => {
+  const store = new RuntimeStore(`/tmp/tenebiris-chat-history-${process.pid}-${Date.now()}.sqlite`);
+  try {
+    store.addChatMessage({sessionId: 'mr-sunan-main', agentId: 'agent_mr_sunan', role: 'user', content: 'ping', model: null});
+    store.addChatMessage({sessionId: 'mr-sunan-main', agentId: 'agent_mr_sunan', role: 'assistant', content: 'pong', model: 'cx/gpt-5.6-sol[1m]'});
+    const history = store.listChatMessages('mr-sunan-main');
+    assert.equal(history.length, 2);
+    assert.equal(history[0].role, 'user');
+    assert.equal(history[1].role, 'assistant');
+    assert.equal(history[1].model, 'cx/gpt-5.6-sol[1m]');
+    assert.deepEqual(store.listChatMessages('other-session'), []);
+  } finally {
+    store.close();
+  }
+});
+
+test('serves chat history via API', async () => {
+  await withServer(async baseUrl => {
+    const history = await fetch(`${baseUrl}/api/sessions/mr-sunan-main/messages`);
+    assert.equal(history.status, 200);
+    const payload = await history.json() as {sessionId: string; messages: Array<{role: string; content: string}>};
+    assert.equal(payload.sessionId, 'mr-sunan-main');
+    assert.ok(Array.isArray(payload.messages));
+  });
+});
+
+test('streams chat deltas and persists the final response', async () => {
+  await withServer(async baseUrl => {
+    const stream = await fetch(`${baseUrl}/api/live/chat/stream`, {
+      method: 'POST',
+      headers: {'content-type': 'application/json'},
+      body: JSON.stringify({prompt: 'Reply exactly STREAM_PHASE3_OK.'}),
+    });
+    assert.equal(stream.status, 200);
+    assert.ok(stream.headers.get('content-type')?.includes('text/event-stream'));
+    const body = await stream.text();
+    assert.ok(body.includes('event: done'), 'stream should end with done event');
+    const doneBlock = body.split('\n\n').find(block => block.includes('event: done')) ?? '';
+    const doneLine = doneBlock.split('\n').find(line => line.startsWith('data:')) ?? '';
+    const done = JSON.parse(doneLine.slice(5)) as {response: string; model: string; session: string};
+    assert.ok(done.response.includes('STREAM_PHASE3_OK'));
+    assert.equal(done.model, 'anthropic/claude-test');
+    assert.equal(done.session, 'mr-sunan-main');
+
+    const history = await fetch(`${baseUrl}/api/sessions/mr-sunan-main/messages`);
+    const payload = await history.json() as {messages: Array<{role: string; content: string}>};
+    assert.ok(payload.messages.some(message => message.role === 'user' && message.content.includes('STREAM_PHASE3_OK')));
+    assert.ok(payload.messages.some(message => message.role === 'assistant' && message.content.includes('STREAM_PHASE3_OK')));
   });
 });
 

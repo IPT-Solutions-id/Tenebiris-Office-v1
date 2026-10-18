@@ -22,6 +22,15 @@ export type SessionRecord = {
   name: string;
 };
 
+export type ChatMessageRecord = {
+  sessionId: string;
+  agentId: string;
+  role: 'user' | 'assistant';
+  content: string;
+  model: string | null;
+  createdAt: string;
+};
+
 export type AgentDefinition = {
   id: string;
   name: string;
@@ -80,6 +89,17 @@ export class RuntimeStore {
         definition_json TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS chat_messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id TEXT NOT NULL,
+        agent_id TEXT NOT NULL,
+        role TEXT NOT NULL,
+        content TEXT NOT NULL,
+        model TEXT,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_chat_messages_session
+        ON chat_messages (session_id, id);
     `);
   }
 
@@ -180,6 +200,30 @@ export class RuntimeStore {
   listAgents(): AgentDefinition[] {
     const rows = this.database.prepare('SELECT definition_json FROM agents ORDER BY id').all() as Array<{definition_json: string}>;
     return rows.map(row => JSON.parse(row.definition_json) as AgentDefinition);
+  }
+
+  addChatMessage(message: Omit<ChatMessageRecord, 'createdAt'>): ChatMessageRecord {
+    const createdAt = new Date().toISOString();
+    this.database.prepare(`
+      INSERT INTO chat_messages (session_id, agent_id, role, content, model, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(message.sessionId, message.agentId, message.role, message.content, message.model, createdAt);
+    return {...message, createdAt};
+  }
+
+  listChatMessages(sessionId: string): ChatMessageRecord[] {
+    const rows = this.database.prepare(`
+      SELECT session_id, agent_id, role, content, model, created_at
+      FROM chat_messages WHERE session_id = ? ORDER BY id
+    `).all(sessionId) as Array<Record<string, unknown>>;
+    return rows.map(row => ({
+      sessionId: String(row.session_id),
+      agentId: String(row.agent_id),
+      role: row.role === 'user' ? 'user' as const : 'assistant' as const,
+      content: String(row.content),
+      model: row.model === null ? null : String(row.model),
+      createdAt: String(row.created_at),
+    }));
   }
 
   close() {

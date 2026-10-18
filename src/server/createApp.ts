@@ -1,4 +1,4 @@
-import {spawn} from 'node:child_process';
+import {spawn, type ChildProcess} from 'node:child_process';
 import path from 'node:path';
 import express, {type Express, type Request, type Response} from 'express';
 import {syncModelCatalog} from './modelRegistry';
@@ -9,6 +9,8 @@ const HERMES_BIN = process.env.HERMES_BIN ?? '/opt/hermes/.venv/bin/hermes';
 const REQUEST_TIMEOUT_MS = 120_000;
 
 type RunHermesCommand = (args: string[]) => Promise<string>;
+
+type SpawnHermesProcess = (args: string[]) => ChildProcess;
 
 export type RuntimeConfig = {
   profile: string;
@@ -28,10 +30,17 @@ type ModelSyncResult = {
 type CreateProductionAppOptions = {
   distDir: string;
   runHermesCommand?: RunHermesCommand;
+  spawnHermesProcess?: SpawnHermesProcess;
   runtimeStore: RuntimeStore;
   runtimeConfig: RuntimeConfig;
   syncModels?: () => Promise<ModelSyncResult>;
 };
+
+const spawnHermesChild: SpawnHermesProcess = args => spawn(HERMES_BIN, args, {
+  cwd: process.cwd(),
+  env: process.env,
+  stdio: ['ignore', 'pipe', 'pipe'],
+});
 
 const runHermesProcess: RunHermesCommand = args => new Promise((resolve, reject) => {
   const child = spawn(HERMES_BIN, args, {
@@ -61,6 +70,7 @@ const runHermesProcess: RunHermesCommand = args => new Promise((resolve, reject)
     }
     resolve(Buffer.concat(stdout).toString('utf8').trim());
   });
+  return child;
 });
 
 const sendFailure = (res: Response, error: unknown) => {
@@ -79,10 +89,12 @@ const parsePrompt = (req: Request) => {
 export const createProductionApp = ({
   distDir,
   runHermesCommand = runHermesProcess,
+  spawnHermesProcess,
   runtimeStore,
   runtimeConfig,
   syncModels,
 }: CreateProductionAppOptions): Express => {
+  const spawnHermes = spawnHermesProcess ?? spawnHermesChild;
   const app = express();
   app.disable('x-powered-by');
   app.use(express.json({limit: '1mb'}));
@@ -209,6 +221,13 @@ export const createProductionApp = ({
     res.json(agent);
   });
 
+  app.get('/api/sessions/:sessionId/messages', (req, res) => {
+    res.json({
+      sessionId: req.params.sessionId,
+      messages: runtimeStore.listChatMessages(req.params.sessionId),
+    });
+  });
+
   app.put('/api/agents/:id', (req, res) => {
     const agent = req.body as AgentDefinition;
     if (!agent || agent.id !== req.params.id) return res.status(400).json({error: 'Agent ID mismatch'});
@@ -234,21 +253,101 @@ export const createProductionApp = ({
     }
   });
 
+  app.post('/api/live/chat/stream', async (req, res) => {
+    const agent = runtimeStore.getAgent('agent_mr_sunan');
+    let prompt: string;
+    try {
+      prompt = parsePrompt(req);
+    } catch (error) {
+      sendFailure(res, error);
+      return;
+    }
+    const model = agent?.modelBinding.primaryModelId ?? runtimeConfig.defaultModel;
+    runtimeStore.addChatMessage({
+      sessionId: mrSunanSession.name, agentId: mrSunanSession.agentId, role: 'user', content: prompt, model: null,
+    });
+    res.writeHead(200, {
+      'content-type': 'text/event-stream',
+      'cache-control': 'no-cache',
+      connection: 'keep-alive',
+    });
+    const send = (event: string, data: unknown) => {
+      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+    const child = spawnHermes(buildSessionArgs({
+      profile: mrSunanSession.profile,
+      sessionName: mrSunanSession.name,
+      prompt,
+      model,
+    }));
+    let completed = false;
+    const timer = setTimeout(() => {
+      child.kill('SIGTERM');
+      if (!completed) {
+        completed = true;
+        send('error', {error: 'Hermes request timed out'});
+        res.end();
+      }
+    }, REQUEST_TIMEOUT_MS);
+    req.on('close', () => {
+      if (!child.killed) child.kill('SIGTERM');
+    });
+    let full = '';
+    child.stdout?.on('data', chunk => {
+      full += String(chunk);
+      send('delta', {text: String(chunk)});
+    });
+    child.stderr?.on('data', chunk => send('stderr', {text: String(chunk)}));
+    child.on('error', error => {
+      clearTimeout(timer);
+      if (!completed) {
+        completed = true;
+        send('error', {error: error.message});
+        res.end();
+      }
+    });
+    child.on('close', code => {
+      clearTimeout(timer);
+      if (completed) return;
+      completed = true;
+      if (code !== 0) {
+        send('error', {error: `Hermes exited with code ${code ?? 'unknown'}`});
+        res.end();
+        return;
+      }
+      const response = full.trim();
+      runtimeStore.addChatMessage({
+        sessionId: mrSunanSession.name, agentId: mrSunanSession.agentId, role: 'assistant', content: response, model,
+      });
+      send('done', {response, model, session: mrSunanSession.name});
+      res.end();
+    });
+  });
+
   app.post('/api/live/chat', async (req, res) => {
     try {
+      const agent = runtimeStore.getAgent('agent_mr_sunan');
+      const prompt = parsePrompt(req);
+      runtimeStore.addChatMessage({
+        sessionId: mrSunanSession.name, agentId: mrSunanSession.agentId, role: 'user', content: prompt, model: null,
+      });
+      const model = agent?.modelBinding.primaryModelId ?? runtimeConfig.defaultModel;
       const response = await runHermesCommand(buildSessionArgs({
         profile: mrSunanSession.profile,
         sessionName: mrSunanSession.name,
-        prompt: parsePrompt(req),
-        model: runtimeConfig.defaultModel,
+        prompt,
+        model,
       }));
+      runtimeStore.addChatMessage({
+        sessionId: mrSunanSession.name, agentId: mrSunanSession.agentId, role: 'assistant', content: response, model,
+      });
       res.json({
         status: 'completed',
         response,
         runtime: 'Hermes',
         profile: mrSunanSession.profile,
         session: mrSunanSession.name,
-        model: runtimeConfig.defaultModel,
+        model,
       });
     } catch (error) {
       sendFailure(res, error);
@@ -260,10 +359,13 @@ export const createProductionApp = ({
       const title = typeof req.body?.title === 'string' ? req.body.title.trim() : '';
       const description = typeof req.body?.description === 'string' ? req.body.description.trim() : '';
       if (!title) throw new Error('title is required');
+      const agent = runtimeStore.getAgent('agent_mr_sunan');
+      const taskSession = `${mrSunanSession.name}-tasks`;
+      const model = agent?.modelBinding.primaryModelId ?? runtimeConfig.defaultModel;
       const response = await runHermesCommand(buildSessionArgs({
         profile: mrSunanSession.profile,
-        sessionName: `${mrSunanSession.name}-tasks`,
-        model: runtimeConfig.defaultModel,
+        sessionName: taskSession,
+        model,
         prompt: [
           'Execute this task now using the active Hermes runtime.',
           `Title: ${title}`,
@@ -271,13 +373,19 @@ export const createProductionApp = ({
           'Return a concise execution report with result, files created, and blockers.',
         ].join('\n'),
       }));
+      runtimeStore.addChatMessage({
+        sessionId: taskSession, agentId: mrSunanSession.agentId, role: 'user', content: `TASK: ${title}`, model: null,
+      });
+      runtimeStore.addChatMessage({
+        sessionId: taskSession, agentId: mrSunanSession.agentId, role: 'assistant', content: response, model,
+      });
       res.json({
         status: 'completed',
         response,
         runtime: 'Hermes',
         profile: mrSunanSession.profile,
-        session: `${mrSunanSession.name}-tasks`,
-        model: runtimeConfig.defaultModel,
+        session: taskSession,
+        model,
       });
     } catch (error) {
       sendFailure(res, error);
