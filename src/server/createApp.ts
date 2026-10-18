@@ -50,18 +50,29 @@ const runHermesProcess: RunHermesCommand = args => new Promise((resolve, reject)
   });
   const stdout: Buffer[] = [];
   const stderr: Buffer[] = [];
+  let settled = false;
   const timeout = setTimeout(() => {
+    if (settled) return;
+    settled = true;
     child.kill('SIGTERM');
+    const forceKill = setTimeout(() => {
+      if (!child.killed) child.kill('SIGKILL');
+    }, 2_000);
+    forceKill.unref();
     reject(new Error('Hermes request timed out'));
   }, REQUEST_TIMEOUT_MS);
 
   child.stdout.on('data', chunk => stdout.push(Buffer.from(chunk)));
   child.stderr.on('data', chunk => stderr.push(Buffer.from(chunk)));
   child.on('error', error => {
+    if (settled) return;
+    settled = true;
     clearTimeout(timeout);
     reject(error);
   });
   child.on('close', code => {
+    if (settled) return;
+    settled = true;
     clearTimeout(timeout);
     if (code !== 0) {
       const detail = Buffer.concat(stderr).toString('utf8').trim();
