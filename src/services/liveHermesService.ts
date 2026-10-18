@@ -37,3 +37,5 @@ export const executeHermesTask = (title: string, description: string) => request
 });
 
 export const discoverHermesSkills = () => request<{ status: string; skills: string[]; runtime: string }>('/api/live/skills');
+
+export const fetchLiveAgents = () => request<{agents: import('../types/office').AgentCoreDefinition[]}>('/api/agents');

@@ -106,7 +106,33 @@ test('exposes provider, profile, session, and model runtime status', async () =>
       profile: 'tenebiris',
       provider: {id: 'tenebiris9', name: '9Router', status: 'connected', baseUrl: 'https://router.example/v1', lastError: null},
       model: {default: 'anthropic/claude-test', catalogCount: 1},
-      session: {agentId: 'mr-sunan', profile: 'tenebiris', name: 'mr-sunan-main'},
+      session: {agentId: 'agent_mr_sunan', profile: 'tenebiris', name: 'mr-sunan-main'},
     });
+  });
+});
+
+test('serves and updates a complete live agent definition', async () => {
+  await withServer(async baseUrl => {
+    const response = await fetch(`${baseUrl}/api/agents/agent_mr_sunan`);
+    assert.equal(response.status, 200);
+    const agent = await response.json() as {
+      soul: {name: string; version: number; communicationStyle: string};
+      role: {name: string};
+      modelBinding: {providerId: string};
+      status: string;
+    };
+    assert.equal(agent.soul.name, 'Strategic Commander');
+    assert.equal(agent.role.name, 'Chief AI Orchestrator');
+    assert.equal(agent.modelBinding.providerId, 'tenebiris9');
+    assert.equal(agent.status, 'READY');
+
+    const updated = {...agent, soul: {...agent.soul, version: 2, communicationStyle: 'Concise Indonesian'}};
+    const save = await fetch(`${baseUrl}/api/agents/agent_mr_sunan`, {
+      method: 'PUT', headers: {'content-type': 'application/json'}, body: JSON.stringify(updated),
+    });
+    assert.equal(save.status, 200);
+    const saved = await save.json() as {soul: {version: number; communicationStyle: string}};
+    assert.equal(saved.soul.version, 2);
+    assert.equal(saved.soul.communicationStyle, 'Concise Indonesian');
   });
 });

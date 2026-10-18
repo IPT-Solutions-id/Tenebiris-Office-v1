@@ -2,7 +2,7 @@ import {spawn} from 'node:child_process';
 import path from 'node:path';
 import express, {type Express, type Request, type Response} from 'express';
 import {syncModelCatalog} from './modelRegistry';
-import {type ModelRecord, RuntimeStore} from './runtimeStore';
+import {type AgentDefinition, type ModelRecord, RuntimeStore} from './runtimeStore';
 import {buildSessionArgs} from './sessionManager';
 
 const HERMES_BIN = process.env.HERMES_BIN ?? '/opt/hermes/.venv/bin/hermes';
@@ -88,10 +88,31 @@ export const createProductionApp = ({
   app.use(express.json({limit: '1mb'}));
 
   const mrSunanSession = runtimeStore.ensureSession({
-    agentId: 'mr-sunan',
+    agentId: 'agent_mr_sunan',
     profile: runtimeConfig.profile,
     name: 'mr-sunan-main',
   });
+  const defaultMrSunan: AgentDefinition = {
+    id: 'agent_mr_sunan', name: 'Mr Sunan', agentNumber: '001', department: 'Central Command',
+    soul: {
+      name: 'Strategic Commander', version: 1,
+      principles: ['Verify before reporting', 'Delegate specialist work', 'Preserve approved architecture'],
+      communicationStyle: 'Direct Indonesian',
+    },
+    role: {
+      id: 'chief-ai-orchestrator', name: 'Chief AI Orchestrator', version: 1,
+      mission: 'Coordinate the Tenebiris workforce and deliver verified results.',
+      responsibilities: ['Create tasks', 'Route work', 'Review evidence', 'Report verified outcomes'],
+    },
+    modelBinding: {providerId: runtimeConfig.providerId, primaryModelId: runtimeConfig.defaultModel, fallbackModelIds: []},
+    toolPolicy: {
+      allowed: ['files', 'terminal', 'browser', 'github', 'delegation', 'kanban'],
+      denied: ['credential-export'], approvalRequired: ['production-deploy', 'credential-change'],
+    },
+    memoryPolicy: {profile: 'read-write', project: 'read-write', agent: 'read-write', task: 'read-write'},
+    profile: runtimeConfig.profile, sessionName: mrSunanSession.name, workspace: process.cwd(), status: 'READY',
+  };
+  if (!runtimeStore.getAgent(defaultMrSunan.id)) runtimeStore.upsertAgent(defaultMrSunan);
   const refreshModels = syncModels ?? (() => syncModelCatalog({
     store: runtimeStore,
     providerId: runtimeConfig.providerId,
@@ -176,6 +197,26 @@ export const createProductionApp = ({
       },
       session: mrSunanSession,
     });
+  });
+
+  app.get('/api/agents', (_req, res) => {
+    res.json({agents: runtimeStore.listAgents()});
+  });
+
+  app.get('/api/agents/:id', (req, res) => {
+    const agent = runtimeStore.getAgent(req.params.id);
+    if (!agent) return res.status(404).json({error: 'Agent not found'});
+    res.json(agent);
+  });
+
+  app.put('/api/agents/:id', (req, res) => {
+    const agent = req.body as AgentDefinition;
+    if (!agent || agent.id !== req.params.id) return res.status(400).json({error: 'Agent ID mismatch'});
+    if (!agent.soul || !agent.role || !agent.modelBinding || !agent.toolPolicy || !agent.memoryPolicy) {
+      return res.status(400).json({error: 'Incomplete agent definition'});
+    }
+    runtimeStore.upsertAgent(agent);
+    res.json(runtimeStore.getAgent(agent.id));
   });
 
   app.get('/api/live/skills', async (_req, res) => {

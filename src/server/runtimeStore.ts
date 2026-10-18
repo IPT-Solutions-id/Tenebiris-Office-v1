@@ -22,6 +22,27 @@ export type SessionRecord = {
   name: string;
 };
 
+export type AgentDefinition = {
+  id: string;
+  name: string;
+  agentNumber: string;
+  department: string;
+  soul: {name: string; version: number; principles: string[]; communicationStyle: string};
+  role: {id: string; name: string; version: number; mission: string; responsibilities: string[]};
+  modelBinding: {providerId: string; primaryModelId: string; fallbackModelIds: string[]};
+  toolPolicy: {allowed: string[]; denied: string[]; approvalRequired: string[]};
+  memoryPolicy: {
+    profile: 'none' | 'read' | 'read-write';
+    project: 'none' | 'read' | 'read-write';
+    agent: 'none' | 'read' | 'read-write';
+    task: 'none' | 'read' | 'read-write';
+  };
+  profile: string;
+  sessionName: string;
+  workspace: string;
+  status: 'DRAFT' | 'READY' | 'UNAVAILABLE' | 'ERROR';
+};
+
 export class RuntimeStore {
   private readonly database: DatabaseSync;
 
@@ -52,6 +73,11 @@ export class RuntimeStore {
         agent_id TEXT PRIMARY KEY,
         profile TEXT NOT NULL,
         name TEXT NOT NULL UNIQUE,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS agents (
+        id TEXT PRIMARY KEY,
+        definition_json TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
     `);
@@ -129,6 +155,31 @@ export class RuntimeStore {
     const row = this.database.prepare('SELECT * FROM agent_sessions WHERE agent_id = ?').get(agentId) as Record<string, unknown> | undefined;
     if (!row) return null;
     return {agentId: String(row.agent_id), profile: String(row.profile), name: String(row.name)};
+  }
+
+  upsertAgent(agent: AgentDefinition) {
+    this.database.exec('BEGIN IMMEDIATE');
+    try {
+      this.database.prepare(`
+        INSERT INTO agents (id, definition_json, updated_at) VALUES (?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET definition_json = excluded.definition_json, updated_at = excluded.updated_at
+      `).run(agent.id, JSON.stringify(agent), new Date().toISOString());
+      this.ensureSession({agentId: agent.id, profile: agent.profile, name: agent.sessionName});
+      this.database.exec('COMMIT');
+    } catch (error) {
+      this.database.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
+  getAgent(id: string): AgentDefinition | null {
+    const row = this.database.prepare('SELECT definition_json FROM agents WHERE id = ?').get(id) as {definition_json: string} | undefined;
+    return row ? JSON.parse(row.definition_json) as AgentDefinition : null;
+  }
+
+  listAgents(): AgentDefinition[] {
+    const rows = this.database.prepare('SELECT definition_json FROM agents ORDER BY id').all() as Array<{definition_json: string}>;
+    return rows.map(row => JSON.parse(row.definition_json) as AgentDefinition);
   }
 
   close() {

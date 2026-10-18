@@ -77,6 +77,28 @@ export interface Agent {
   position: { col: number; row: number };
   spriteColor: string;
   hermesBound: boolean;
+  core?: AgentCoreDefinition;
+}
+
+export interface AgentCoreDefinition {
+  id: string;
+  name: string;
+  agentNumber: string;
+  department: string;
+  soul: { name: string; version: number; principles: string[]; communicationStyle: string };
+  role: { id: string; name: string; version: number; mission: string; responsibilities: string[] };
+  modelBinding: { providerId: string; primaryModelId: string; fallbackModelIds: string[] };
+  toolPolicy: { allowed: string[]; denied: string[]; approvalRequired: string[] };
+  memoryPolicy: {
+    profile: 'none' | 'read' | 'read-write';
+    project: 'none' | 'read' | 'read-write';
+    agent: 'none' | 'read' | 'read-write';
+    task: 'none' | 'read' | 'read-write';
+  };
+  profile: string;
+  sessionName: string;
+  workspace: string;
+  status: 'DRAFT' | 'READY' | 'UNAVAILABLE' | 'ERROR';
 }
 
 export interface Workstation {

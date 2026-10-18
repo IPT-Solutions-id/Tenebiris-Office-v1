@@ -63,9 +63,9 @@ export const AgentInspector: React.FC = () => {
               AGENT: {selectedAgent.name}
             </h2>
           </div>
-          <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-[#14291F] text-[#39C5CF] border border-[#39C5CF]/40 flex items-center space-x-1">
+          <span className={`px-2 py-0.5 rounded text-[10px] font-semibold border flex items-center space-x-1 ${selectedAgent.core?.status === 'READY' ? 'bg-[#14291F] text-[#39C5CF] border-[#39C5CF]/40' : 'bg-[#261E14] text-[#C69245] border-[#C69245]/40'}`}>
             <span className="w-1.5 h-1.5 rounded-full bg-[#39C5CF] animate-pulse"></span>
-            <span>Online</span>
+            <span>{selectedAgent.core?.status ?? 'UNVERIFIED'}</span>
           </span>
         </div>
 
@@ -121,7 +121,7 @@ export const AgentInspector: React.FC = () => {
             </div>
             <div className="flex justify-between">
               <span className="text-[#7A7280]">Model</span>
-              <span className="text-[#39C5CF] font-mono text-[10px]">{selectedAgent.model}</span>
+              <span className="text-[#39C5CF] font-mono text-[10px] truncate max-w-[120px]" title={selectedAgent.model}>{selectedAgent.model}</span>
             </div>
             <div className="flex justify-between items-center">
               <span className="text-[#7A7280]">Status</span>
@@ -135,6 +135,22 @@ export const AgentInspector: React.FC = () => {
                 {currentWorkstation ? currentWorkstation.name : 'Chamber'}
               </span>
             </div>
+            {selectedAgent.core && (
+              <>
+                <div className="flex justify-between">
+                  <span className="text-[#7A7280]">Soul</span>
+                  <span className="text-[#C69245] text-[10px]">{selectedAgent.core.soul.name} v{selectedAgent.core.soul.version}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-[#7A7280]">Profile</span>
+                  <span className="text-[#A69EA9] font-mono text-[10px]">{selectedAgent.core.profile}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-[#7A7280]">Session</span>
+                  <span className="text-[#A69EA9] font-mono text-[10px] truncate max-w-[115px]" title={selectedAgent.core.sessionName}>{selectedAgent.core.sessionName}</span>
+                </div>
+              </>
+            )}
           </div>
         </div>
 

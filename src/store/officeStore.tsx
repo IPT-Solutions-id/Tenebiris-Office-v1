@@ -23,7 +23,7 @@ import {
   INITIAL_AUDIT_LOGS,
   INITIAL_WORKFLOWS,
 } from '../data/initialState';
-import { checkHermesLive, discoverHermesSkills, executeHermesTask, sendHermesMessage } from '../services/liveHermesService';
+import { checkHermesLive, discoverHermesSkills, executeHermesTask, fetchLiveAgents, sendHermesMessage } from '../services/liveHermesService';
 
 interface OfficeContextType {
   activeTab: NavigationTab;
@@ -374,6 +374,27 @@ export const OfficeProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   useEffect(() => {
     void testHermesConnection();
     void syncHermesSkills();
+    void fetchLiveAgents().then(result => {
+      setAgents(current => current.map(agent => {
+        const core = result.agents.find(item => item.id === agent.id);
+        if (!core) return agent;
+        return {
+          ...agent,
+          name: core.name,
+          title: core.role.name,
+          department: core.department,
+          role: core.role.name,
+          model: core.modelBinding.primaryModelId,
+          status: core.status === 'READY' ? 'AVAILABLE' : core.status === 'ERROR' ? 'ERROR' : 'UNAVAILABLE',
+          currentAction: core.status === 'READY' ? 'Agent Core ready.' : `Agent Core ${core.status.toLowerCase()}.`,
+          hermesBound: core.status === 'READY',
+          core,
+        };
+      }));
+      addAuditLog('AGENT_CORE', 'SYNC_COMPLETE', `Loaded ${result.agents.length} persistent agent definition(s).`, 'INFO');
+    }).catch(error => {
+      addAuditLog('AGENT_CORE', 'SYNC_FAILED', error instanceof Error ? error.message : String(error), 'ERROR');
+    });
   }, []);
 
   const focusAgentWorkstation = (agentId: string) => {
