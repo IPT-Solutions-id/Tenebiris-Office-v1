@@ -4,18 +4,35 @@ import {tmpdir} from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import {createProductionApp} from './createApp';
+import {RuntimeStore} from './runtimeStore';
 
-const withServer = async (run: (baseUrl: string) => Promise<void>) => {
+const withServer = async (run: (baseUrl: string, commands: string[][]) => Promise<void>) => {
   const distDir = await mkdtemp(path.join(tmpdir(), 'tenebiris-dist-'));
+  const runtimeDir = await mkdtemp(path.join(tmpdir(), 'tenebiris-runtime-'));
+  const runtimeStore = new RuntimeStore(path.join(runtimeDir, 'runtime.sqlite'));
   await writeFile(path.join(distDir, 'index.html'), '<title>Tenebiris Production</title>');
+  const commands: string[][] = [];
 
   const app = createProductionApp({
     distDir,
     runHermesCommand: async args => {
+      commands.push(args);
       if (args.includes('skills')) return '│ Name │\n│ hermes-agent │';
       if (args.some(arg => arg.includes('HERMES_HEALTH_OK'))) return 'HERMES_HEALTH_OK';
       return 'TENEBIRIS_PRODUCTION_OK';
     },
+    runtimeStore,
+    runtimeConfig: {
+      profile: 'tenebiris',
+      providerId: 'tenebiris9',
+      providerName: '9Router',
+      baseUrl: 'https://router.example/v1',
+      apiKey: 'secret',
+      defaultModel: 'anthropic/claude-test',
+    },
+    syncModels: async () => ({status: 'connected', count: 1, models: [{
+      id: 'anthropic/claude-test', ownedBy: 'anthropic', capabilities: {vision: true},
+    }]}),
   });
   const server = app.listen(0, '127.0.0.1');
   await new Promise<void>(resolve => server.once('listening', resolve));
@@ -23,9 +40,10 @@ const withServer = async (run: (baseUrl: string) => Promise<void>) => {
   assert(address && typeof address === 'object');
 
   try {
-    await run(`http://127.0.0.1:${address.port}`);
+    await run(`http://127.0.0.1:${address.port}`, commands);
   } finally {
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    runtimeStore.close();
   }
 };
 
@@ -47,7 +65,7 @@ test('verifies Hermes health through the production bridge', async () => {
 });
 
 test('sends chat through the production bridge', async () => {
-  await withServer(async baseUrl => {
+  await withServer(async (baseUrl, commands) => {
     const response = await fetch(`${baseUrl}/api/live/chat`, {
       method: 'POST',
       headers: {'content-type': 'application/json'},
@@ -59,6 +77,36 @@ test('sends chat through the production bridge', async () => {
       status: 'completed',
       response: 'TENEBIRIS_PRODUCTION_OK',
       runtime: 'Hermes',
+      profile: 'tenebiris',
+      session: 'mr-sunan-main',
+      model: 'anthropic/claude-test',
+    });
+    assert.deepEqual(commands.at(-1), [
+      '-p', 'tenebiris', 'chat', '-q', 'production probe', '-Q',
+      '--continue', 'mr-sunan-main', '--create-if-missing',
+      '--source', 'tenebiris-office', '-m', 'anthropic/claude-test',
+    ]);
+  });
+});
+
+test('exposes provider, profile, session, and model runtime status', async () => {
+  await withServer(async baseUrl => {
+    const refresh = await fetch(`${baseUrl}/api/runtime/models/refresh`, {method: 'POST'});
+    assert.equal(refresh.status, 200);
+
+    const response = await fetch(`${baseUrl}/api/runtime/status`);
+    const payload = await response.json() as {
+      profile: string;
+      provider: {id: string; status: string};
+      model: {default: string; catalogCount: number};
+      session: {agentId: string; name: string};
+    };
+    assert.equal(response.status, 200);
+    assert.deepEqual(payload, {
+      profile: 'tenebiris',
+      provider: {id: 'tenebiris9', name: '9Router', status: 'connected', baseUrl: 'https://router.example/v1', lastError: null},
+      model: {default: 'anthropic/claude-test', catalogCount: 1},
+      session: {agentId: 'mr-sunan', profile: 'tenebiris', name: 'mr-sunan-main'},
     });
   });
 });

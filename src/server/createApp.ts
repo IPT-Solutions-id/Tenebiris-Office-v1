@@ -1,15 +1,36 @@
 import {spawn} from 'node:child_process';
 import path from 'node:path';
 import express, {type Express, type Request, type Response} from 'express';
+import {syncModelCatalog} from './modelRegistry';
+import {type ModelRecord, RuntimeStore} from './runtimeStore';
+import {buildSessionArgs} from './sessionManager';
 
 const HERMES_BIN = process.env.HERMES_BIN ?? '/opt/hermes/.venv/bin/hermes';
 const REQUEST_TIMEOUT_MS = 120_000;
 
 type RunHermesCommand = (args: string[]) => Promise<string>;
 
+export type RuntimeConfig = {
+  profile: string;
+  providerId: string;
+  providerName: string;
+  baseUrl: string;
+  apiKey: string;
+  defaultModel: string;
+};
+
+type ModelSyncResult = {
+  status: 'connected';
+  count: number;
+  models: ModelRecord[];
+};
+
 type CreateProductionAppOptions = {
   distDir: string;
   runHermesCommand?: RunHermesCommand;
+  runtimeStore: RuntimeStore;
+  runtimeConfig: RuntimeConfig;
+  syncModels?: () => Promise<ModelSyncResult>;
 };
 
 const runHermesProcess: RunHermesCommand = args => new Promise((resolve, reject) => {
@@ -55,23 +76,37 @@ const parsePrompt = (req: Request) => {
   return prompt;
 };
 
-const runHermes = (run: RunHermesCommand, prompt: string) => run([
-  'chat', '-q', prompt, '--oneshot', '-Q', '--source', 'tenebiris-office',
-]);
-
 export const createProductionApp = ({
   distDir,
   runHermesCommand = runHermesProcess,
+  runtimeStore,
+  runtimeConfig,
+  syncModels,
 }: CreateProductionAppOptions): Express => {
   const app = express();
   app.disable('x-powered-by');
   app.use(express.json({limit: '1mb'}));
 
+  const mrSunanSession = runtimeStore.ensureSession({
+    agentId: 'mr-sunan',
+    profile: runtimeConfig.profile,
+    name: 'mr-sunan-main',
+  });
+  const refreshModels = syncModels ?? (() => syncModelCatalog({
+    store: runtimeStore,
+    providerId: runtimeConfig.providerId,
+    providerName: runtimeConfig.providerName,
+    baseUrl: runtimeConfig.baseUrl,
+    apiKey: runtimeConfig.apiKey,
+  }));
+
   app.get('/api/live/health', async (_req, res) => {
     const started = Date.now();
     try {
       const output = await runHermesCommand([
+        '-p', runtimeConfig.profile,
         'chat', '-q', 'Reply exactly HERMES_HEALTH_OK.', '--oneshot', '-Q',
+        '-m', runtimeConfig.defaultModel,
       ]);
       const connected = output.includes('HERMES_HEALTH_OK');
       res.status(connected ? 200 : 502).json({
@@ -79,6 +114,9 @@ export const createProductionApp = ({
         connected,
         latencyMs: Date.now() - started,
         runtime: 'Hermes CLI',
+        profile: runtimeConfig.profile,
+        provider: runtimeConfig.providerName,
+        model: runtimeConfig.defaultModel,
         verifiedAt: new Date().toISOString(),
         ...(connected ? {} : {error: 'Hermes returned an unexpected health response'}),
       });
@@ -88,22 +126,68 @@ export const createProductionApp = ({
         connected: false,
         latencyMs: Date.now() - started,
         runtime: 'Hermes CLI',
+        profile: runtimeConfig.profile,
+        provider: runtimeConfig.providerName,
+        model: runtimeConfig.defaultModel,
         verifiedAt: new Date().toISOString(),
         error: error instanceof Error ? error.message : String(error),
       });
     }
   });
 
+  app.post('/api/runtime/models/refresh', async (_req, res) => {
+    try {
+      const result = await refreshModels();
+      runtimeStore.upsertProvider({
+        id: runtimeConfig.providerId,
+        name: runtimeConfig.providerName,
+        baseUrl: runtimeConfig.baseUrl,
+        status: 'connected',
+        lastError: null,
+      });
+      runtimeStore.replaceModels(runtimeConfig.providerId, result.models);
+      res.json({status: result.status, count: result.count});
+    } catch (error) {
+      sendFailure(res, error);
+    }
+  });
+
+  app.get('/api/runtime/models', (_req, res) => {
+    res.json({
+      providerId: runtimeConfig.providerId,
+      models: runtimeStore.listModels(runtimeConfig.providerId),
+    });
+  });
+
+  app.get('/api/runtime/status', (_req, res) => {
+    const provider = runtimeStore.getProvider(runtimeConfig.providerId) ?? {
+      id: runtimeConfig.providerId,
+      name: runtimeConfig.providerName,
+      baseUrl: runtimeConfig.baseUrl,
+      status: 'unconfigured' as const,
+      lastError: null,
+    };
+    res.json({
+      profile: runtimeConfig.profile,
+      provider,
+      model: {
+        default: runtimeConfig.defaultModel,
+        catalogCount: runtimeStore.listModels(runtimeConfig.providerId).length,
+      },
+      session: mrSunanSession,
+    });
+  });
+
   app.get('/api/live/skills', async (_req, res) => {
     try {
-      const output = await runHermesCommand(['skills', 'list']);
+      const output = await runHermesCommand(['-p', runtimeConfig.profile, 'skills', 'list']);
       const skills = output.split(/\r?\n/)
         .map(line => line.trim())
         .filter(line => line.startsWith('│'))
         .map(line => line.split('│')[1]?.trim())
         .filter((name): name is string => Boolean(name))
         .filter(name => name !== 'Name' && !name.startsWith('─'));
-      res.json({status: 'completed', runtime: 'Hermes', skills});
+      res.json({status: 'completed', runtime: 'Hermes', profile: runtimeConfig.profile, skills});
     } catch (error) {
       sendFailure(res, error);
     }
@@ -111,8 +195,20 @@ export const createProductionApp = ({
 
   app.post('/api/live/chat', async (req, res) => {
     try {
-      const response = await runHermes(runHermesCommand, parsePrompt(req));
-      res.json({status: 'completed', response, runtime: 'Hermes'});
+      const response = await runHermesCommand(buildSessionArgs({
+        profile: mrSunanSession.profile,
+        sessionName: mrSunanSession.name,
+        prompt: parsePrompt(req),
+        model: runtimeConfig.defaultModel,
+      }));
+      res.json({
+        status: 'completed',
+        response,
+        runtime: 'Hermes',
+        profile: mrSunanSession.profile,
+        session: mrSunanSession.name,
+        model: runtimeConfig.defaultModel,
+      });
     } catch (error) {
       sendFailure(res, error);
     }
@@ -123,13 +219,25 @@ export const createProductionApp = ({
       const title = typeof req.body?.title === 'string' ? req.body.title.trim() : '';
       const description = typeof req.body?.description === 'string' ? req.body.description.trim() : '';
       if (!title) throw new Error('title is required');
-      const response = await runHermes(runHermesCommand, [
-        'Execute this task now using the active Hermes runtime.',
-        `Title: ${title}`,
-        `Description: ${description || '(none)'}`,
-        'Return a concise execution report with result, files created, and blockers.',
-      ].join('\n'));
-      res.json({status: 'completed', response, runtime: 'Hermes'});
+      const response = await runHermesCommand(buildSessionArgs({
+        profile: mrSunanSession.profile,
+        sessionName: `${mrSunanSession.name}-tasks`,
+        model: runtimeConfig.defaultModel,
+        prompt: [
+          'Execute this task now using the active Hermes runtime.',
+          `Title: ${title}`,
+          `Description: ${description || '(none)'}`,
+          'Return a concise execution report with result, files created, and blockers.',
+        ].join('\n'),
+      }));
+      res.json({
+        status: 'completed',
+        response,
+        runtime: 'Hermes',
+        profile: mrSunanSession.profile,
+        session: `${mrSunanSession.name}-tasks`,
+        model: runtimeConfig.defaultModel,
+      });
     } catch (error) {
       sendFailure(res, error);
     }
