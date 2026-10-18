@@ -1,0 +1,23 @@
+name: Deploy Tenebiris Office
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: tenebiris-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, linux, x64, tenebiris-production]
+    timeout-minutes: 15
+    steps:
+      - name: Deploy exact commit
+        working-directory: /opt/data/Tenebiris Office/Tenebiris-Office-v1
+        run: bash scripts/deploy.sh "${{ github.sha }}"
+
+      - name: Verify deployed revision
+        working-directory: /opt/data/Tenebiris Office/Tenebiris-Office-v1
+        run: test "$(git rev-parse HEAD)" = "${{ github.sha }}"

@@ -4,5 +4,6 @@ dist/
 coverage/
 .DS_Store
 *.log
+.tenebiris.pid
 .env*
 !.env.example
