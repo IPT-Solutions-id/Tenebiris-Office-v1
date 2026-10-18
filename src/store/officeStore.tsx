@@ -23,7 +23,7 @@ import {
   INITIAL_AUDIT_LOGS,
   INITIAL_WORKFLOWS,
 } from '../data/initialState';
-import { checkHermesLive, discoverHermesSkills, executeHermesTask, fetchLiveAgents, sendHermesMessage } from '../services/liveHermesService';
+import { checkHermesLive, discoverHermesSkills, executeHermesTask, fetchChatHistory, fetchLiveAgents, sendHermesMessage } from '../services/liveHermesService';
 
 interface OfficeContextType {
   activeTab: NavigationTab;
@@ -386,6 +386,25 @@ export const OfficeProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   useEffect(() => {
     void testHermesConnection();
     void syncHermesSkills();
+    void fetchChatHistory('mr-sunan-main').then(result => {
+      const hydrated: A2AMessage[] = result.messages.map((message, index) => ({
+        id: `persisted_${message.createdAt}_${index}`,
+        senderId: message.role === 'user' ? 'user_high_priest' : PRIMARY_AGENT_MR_SUNAN.id,
+        senderName: message.role === 'user' ? 'High Priest (You)' : PRIMARY_AGENT_MR_SUNAN.name,
+        receiverId: message.role === 'user' ? PRIMARY_AGENT_MR_SUNAN.id : 'user_high_priest',
+        receiverName: message.role === 'user' ? PRIMARY_AGENT_MR_SUNAN.name : 'High Priest (You)',
+        timestamp: new Date(message.createdAt).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}),
+        content: message.content,
+        status: message.role === 'assistant' ? 'delivered' : 'sent',
+      }));
+      setMessages(current => {
+        const existing = new Set(current.map(message => `${message.senderId}:${message.content}`));
+        return [...current, ...hydrated.filter(message => !existing.has(`${message.senderId}:${message.content}`))];
+      });
+      addAuditLog('CHAT_HISTORY', 'HYDRATION_COMPLETE', `Loaded ${hydrated.length} persisted message(s) from mr-sunan-main.`, 'INFO');
+    }).catch(error => {
+      addAuditLog('CHAT_HISTORY', 'HYDRATION_FAILED', error instanceof Error ? error.message : String(error), 'WARN');
+    });
     void fetchLiveAgents().then(result => {
       setAgents(current => current.map(agent => {
         const core = result.agents.find(item => item.id === agent.id);

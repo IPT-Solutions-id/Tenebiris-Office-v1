@@ -24,6 +24,17 @@ const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
   return payload;
 };
 
+export type PersistedChatMessage = {
+  sessionId: string;
+  agentId: string;
+  role: 'user' | 'assistant';
+  content: string;
+  model: string | null;
+  createdAt: string;
+};
+
+export const fetchChatHistory = (sessionId = 'mr-sunan-main') => request<{sessionId: string; messages: PersistedChatMessage[]}>(`/api/sessions/${encodeURIComponent(sessionId)}/messages`);
+
 export const checkHermesLive = () => request<HermesHealthResult>('/api/live/health');
 
 export const sendHermesMessage = (prompt: string) => request<HermesLiveResult>('/api/live/chat', {
