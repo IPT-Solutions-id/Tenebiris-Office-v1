@@ -19,7 +19,7 @@ export default defineConfig(() => {
       // Disable file watching when DISABLE_HMR is true to save CPU during agent edits.
       watch: process.env.DISABLE_HMR === 'true' ? null : {},
       // Allow the temporary HTTPS preview tunnel to reach Vite.
-      allowedHosts: true as true,
+      allowedHosts: ["tenebiris.ipt.solutions"],
     },
   };
 });
