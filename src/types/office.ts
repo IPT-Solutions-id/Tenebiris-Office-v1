@@ -86,9 +86,12 @@ export interface AgentCoreDefinition {
   agentNumber: string;
   department: string;
   soul: { name: string; version: number; principles: string[]; communicationStyle: string };
-  role: { id: string; name: string; version: number; mission: string; responsibilities: string[] };
+  role: { id: string; name: string; version: number; mission: string; responsibilities: string[]; jobTypes: string[]; requiredOutput: string[]; successCriteria: string[]; boundaries: string[] };
   modelBinding: { providerId: string; primaryModelId: string; fallbackModelIds: string[] };
+  skills: Array<{ id: string; name: string; proficiency: string }>;
   toolPolicy: { allowed: string[]; denied: string[]; approvalRequired: string[] };
+  approvalPolicy: { default: 'auto' | 'ask' | 'deny'; rules: string[] };
+  learningPolicy: { enabled: boolean; allowedSources: string[]; requiresApproval: boolean; retention: 'session' | 'agent' | 'project' };
   memoryPolicy: {
     profile: 'none' | 'read' | 'read-write';
     project: 'none' | 'read' | 'read-write';

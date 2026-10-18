@@ -37,9 +37,15 @@ export type AgentDefinition = {
   agentNumber: string;
   department: string;
   soul: {name: string; version: number; principles: string[]; communicationStyle: string};
-  role: {id: string; name: string; version: number; mission: string; responsibilities: string[]};
+  role: {
+    id: string; name: string; version: number; mission: string; responsibilities: string[];
+    jobTypes: string[]; requiredOutput: string[]; successCriteria: string[]; boundaries: string[];
+  };
   modelBinding: {providerId: string; primaryModelId: string; fallbackModelIds: string[]};
+  skills: Array<{id: string; name: string; proficiency: string}>;
   toolPolicy: {allowed: string[]; denied: string[]; approvalRequired: string[]};
+  approvalPolicy: {default: 'auto' | 'ask' | 'deny'; rules: string[]};
+  learningPolicy: {enabled: boolean; allowedSources: string[]; requiresApproval: boolean; retention: 'session' | 'agent' | 'project'};
   memoryPolicy: {
     profile: 'none' | 'read' | 'read-write';
     project: 'none' | 'read' | 'read-write';
@@ -100,6 +106,27 @@ export class RuntimeStore {
       );
       CREATE INDEX IF NOT EXISTS idx_chat_messages_session
         ON chat_messages (session_id, id);
+      CREATE TABLE IF NOT EXISTS agent_definition_versions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        agent_id TEXT NOT NULL,
+        soul_version INTEGER NOT NULL,
+        role_version INTEGER NOT NULL,
+        soul_json TEXT NOT NULL,
+        role_json TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS task_runs (
+        id TEXT PRIMARY KEY,
+        agent_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        task_title TEXT NOT NULL,
+        soul_version INTEGER NOT NULL,
+        role_version INTEGER NOT NULL,
+        definition_snapshot_json TEXT NOT NULL,
+        status TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_task_runs_agent ON task_runs (agent_id, created_at);
     `);
   }
 
@@ -180,16 +207,64 @@ export class RuntimeStore {
   upsertAgent(agent: AgentDefinition) {
     this.database.exec('BEGIN IMMEDIATE');
     try {
+      const previous = this.getAgent(agent.id);
+      const changedSoul = !previous || JSON.stringify(previous.soul) !== JSON.stringify(agent.soul);
+      const changedRole = !previous || JSON.stringify(previous.role) !== JSON.stringify(agent.role);
+      const nextSoul = changedSoul && previous ? previous.soul.version + 1 : agent.soul.version;
+      const nextRole = changedRole && previous ? previous.role.version + 1 : agent.role.version;
+      const normalized = {
+        ...agent,
+        soul: {...agent.soul, version: nextSoul},
+        role: {...agent.role, version: nextRole},
+      } as AgentDefinition;
       this.database.prepare(`
         INSERT INTO agents (id, definition_json, updated_at) VALUES (?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET definition_json = excluded.definition_json, updated_at = excluded.updated_at
-      `).run(agent.id, JSON.stringify(agent), new Date().toISOString());
-      this.ensureSession({agentId: agent.id, profile: agent.profile, name: agent.sessionName});
+      `).run(normalized.id, JSON.stringify(normalized), new Date().toISOString());
+      this.database.prepare(`
+        INSERT INTO agent_definition_versions
+          (agent_id, soul_version, role_version, soul_json, role_json, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).run(normalized.id, normalized.soul.version, normalized.role.version,
+        JSON.stringify(normalized.soul), JSON.stringify(normalized.role), new Date().toISOString());
+      this.ensureSession({agentId: normalized.id, profile: normalized.profile, name: normalized.sessionName});
       this.database.exec('COMMIT');
     } catch (error) {
       this.database.exec('ROLLBACK');
       throw error;
     }
+  }
+
+  createTaskRun(run: {id: string; agentId: string; sessionId: string; taskTitle: string; definition: AgentDefinition}) {
+    this.database.prepare(`
+      INSERT INTO task_runs
+        (id, agent_id, session_id, task_title, soul_version, role_version, definition_snapshot_json, status, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'RUNNING', ?)
+    `).run(run.id, run.agentId, run.sessionId, run.taskTitle, run.definition.soul.version,
+      run.definition.role.version, JSON.stringify(run.definition), new Date().toISOString());
+    return this.getTaskRun(run.id);
+  }
+
+  listDefinitionVersions(agentId: string) {
+    const rows = this.database.prepare(`
+      SELECT agent_id, soul_version, role_version, soul_json, role_json, created_at
+      FROM agent_definition_versions WHERE agent_id = ? ORDER BY id
+    `).all(agentId) as Array<Record<string, unknown>>;
+    return rows.map(row => ({
+      agentId: String(row.agent_id), soulVersion: Number(row.soul_version), roleVersion: Number(row.role_version),
+      soul: JSON.parse(String(row.soul_json)), role: JSON.parse(String(row.role_json)), createdAt: String(row.created_at),
+    }));
+  }
+
+  getTaskRun(id: string) {
+    const row = this.database.prepare('SELECT * FROM task_runs WHERE id = ?').get(id) as Record<string, unknown> | undefined;
+    if (!row) return null;
+    return {
+      id: String(row.id), agentId: String(row.agent_id), sessionId: String(row.session_id),
+      taskTitle: String(row.task_title), soulVersion: Number(row.soul_version), roleVersion: Number(row.role_version),
+      definition: JSON.parse(String(row.definition_snapshot_json)) as AgentDefinition,
+      status: String(row.status), createdAt: String(row.created_at),
+    };
   }
 
   getAgent(id: string): AgentDefinition | null {

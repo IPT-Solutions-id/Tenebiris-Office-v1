@@ -39,3 +39,15 @@ export const executeHermesTask = (title: string, description: string) => request
 export const discoverHermesSkills = () => request<{ status: string; skills: string[]; runtime: string }>('/api/live/skills');
 
 export const fetchLiveAgents = () => request<{agents: import('../types/office').AgentCoreDefinition[]}>('/api/agents');
+
+export const createLiveAgent = (definition: import('../types/office').AgentCoreDefinition) => request<import('../types/office').AgentCoreDefinition>('/api/agents', {
+  method: 'POST',
+  body: JSON.stringify(definition),
+});
+
+export const updateLiveAgent = (id: string, definition: import('../types/office').AgentCoreDefinition) => request<import('../types/office').AgentCoreDefinition>(`/api/agents/${encodeURIComponent(id)}`, {
+  method: 'PUT',
+  body: JSON.stringify(definition),
+});
+
+export const fetchAgentVersions = (id: string) => request<{agentId: string; versions: Array<{soulVersion: number; roleVersion: number; createdAt: string}>}>(`/api/agents/${encodeURIComponent(id)}/versions`);

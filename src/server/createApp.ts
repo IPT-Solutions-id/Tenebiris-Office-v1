@@ -115,7 +115,14 @@ export const createProductionApp = ({
       id: 'chief-ai-orchestrator', name: 'Chief AI Orchestrator', version: 1,
       mission: 'Coordinate the Tenebiris workforce and deliver verified results.',
       responsibilities: ['Create tasks', 'Route work', 'Review evidence', 'Report verified outcomes'],
+      jobTypes: ['orchestration', 'review', 'delegation'],
+      requiredOutput: ['execution report', 'evidence summary'],
+      successCriteria: ['verified result', 'clear blockers'],
+      boundaries: ['approval-gated production changes'],
     },
+    skills: [{id: 'orchestration', name: 'Orchestration', proficiency: 'Expert'}],
+    approvalPolicy: {default: 'ask', rules: ['production-deploy', 'credential-change']},
+    learningPolicy: {enabled: true, allowedSources: ['task-results', 'approved-feedback'], requiresApproval: true, retention: 'agent'},
     modelBinding: {providerId: runtimeConfig.providerId, primaryModelId: runtimeConfig.defaultModel, fallbackModelIds: []},
     toolPolicy: {
       allowed: ['files', 'terminal', 'browser', 'github', 'delegation', 'kanban'],
@@ -231,11 +238,33 @@ export const createProductionApp = ({
   app.put('/api/agents/:id', (req, res) => {
     const agent = req.body as AgentDefinition;
     if (!agent || agent.id !== req.params.id) return res.status(400).json({error: 'Agent ID mismatch'});
-    if (!agent.soul || !agent.role || !agent.modelBinding || !agent.toolPolicy || !agent.memoryPolicy) {
+    if (!agent.soul || !agent.role || !agent.modelBinding || !agent.toolPolicy || !agent.memoryPolicy ||
+        !agent.skills || !agent.approvalPolicy || !agent.learningPolicy) {
       return res.status(400).json({error: 'Incomplete agent definition'});
     }
     runtimeStore.upsertAgent(agent);
     res.json(runtimeStore.getAgent(agent.id));
+  });
+
+  app.post('/api/agents', (req, res) => {
+    const agent = req.body as AgentDefinition;
+    if (!agent?.id || !agent.name || !agent.soul || !agent.role || !agent.modelBinding || !agent.skills ||
+        !agent.toolPolicy || !agent.memoryPolicy || !agent.approvalPolicy || !agent.learningPolicy) {
+      return res.status(400).json({error: 'Incomplete agent definition'});
+    }
+    if (runtimeStore.getAgent(agent.id)) return res.status(409).json({error: 'Agent already exists'});
+    runtimeStore.upsertAgent({...agent, status: agent.status ?? 'DRAFT'});
+    res.status(201).json(runtimeStore.getAgent(agent.id));
+  });
+
+  app.get('/api/agents/:id/versions', (req, res) => {
+    res.json({agentId: req.params.id, versions: runtimeStore.listDefinitionVersions(req.params.id)});
+  });
+
+  app.get('/api/task-runs/:id', (req, res) => {
+    const run = runtimeStore.getTaskRun(req.params.id);
+    if (!run) return res.status(404).json({error: 'Task run not found'});
+    res.json(run);
   });
 
   app.get('/api/live/skills', async (_req, res) => {
@@ -362,6 +391,10 @@ export const createProductionApp = ({
       const agent = runtimeStore.getAgent('agent_mr_sunan');
       const taskSession = `${mrSunanSession.name}-tasks`;
       const model = agent?.modelBinding.primaryModelId ?? runtimeConfig.defaultModel;
+      const taskRunId = `run_${Date.now()}`;
+      if (agent) runtimeStore.createTaskRun({
+        id: taskRunId, agentId: agent.id, sessionId: taskSession, taskTitle: title, definition: agent,
+      });
       const response = await runHermesCommand(buildSessionArgs({
         profile: mrSunanSession.profile,
         sessionName: taskSession,

@@ -185,6 +185,38 @@ test('exposes provider, profile, session, and model runtime status', async () =>
   });
 });
 
+test('creates agents and exposes versioned task snapshots', async () => {
+  await withServer(async baseUrl => {
+    const definition = {
+      id: 'agent_phase45', name: 'Phase 45', agentNumber: '045', department: 'Research',
+      soul: {name: 'Measured Analyst', version: 1, principles: ['Verify'], communicationStyle: 'Concise'},
+      role: {id: 'research', name: 'Research Agent', version: 1, mission: 'Research', responsibilities: ['Research'], jobTypes: ['research'], requiredOutput: ['report'], successCriteria: ['cited'], boundaries: ['no deploy']},
+      modelBinding: {providerId: 'tenebiris9', primaryModelId: 'anthropic/claude-test', fallbackModelIds: []},
+      skills: [{id: 'research', name: 'Research', proficiency: 'Advanced'}],
+      toolPolicy: {allowed: ['browser'], denied: ['credential-export'], approvalRequired: []},
+      approvalPolicy: {default: 'ask', rules: []},
+      learningPolicy: {enabled: true, allowedSources: ['approved-feedback'], requiresApproval: true, retention: 'agent'},
+      memoryPolicy: {profile: 'read-write', project: 'read-write', agent: 'read-write', task: 'read-write'},
+      profile: 'tenebiris', sessionName: 'phase45-main', workspace: '/tmp/phase45', status: 'DRAFT',
+    };
+    const created = await fetch(`${baseUrl}/api/agents`, {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify(definition)});
+    assert.equal(created.status, 201);
+    const saved = await created.json() as typeof definition;
+    assert.equal(saved.soul.version, 1);
+    assert.equal(saved.role.version, 1);
+
+    const changed = {...saved, soul: {...saved.soul, name: 'Measured Analyst v2'}};
+    const updated = await fetch(`${baseUrl}/api/agents/${definition.id}`, {method: 'PUT', headers: {'content-type': 'application/json'}, body: JSON.stringify(changed)});
+    assert.equal(updated.status, 200);
+    const versioned = await updated.json() as typeof definition;
+    assert.equal(versioned.soul.version, 2);
+
+    const versions = await fetch(`${baseUrl}/api/agents/${definition.id}/versions`);
+    const versionPayload = await versions.json() as {versions: Array<{soulVersion: number}>};
+    assert.ok(versionPayload.versions.some(version => version.soulVersion === 2));
+  });
+});
+
 test('serves and updates a complete live agent definition', async () => {
   await withServer(async baseUrl => {
     const response = await fetch(`${baseUrl}/api/agents/agent_mr_sunan`);

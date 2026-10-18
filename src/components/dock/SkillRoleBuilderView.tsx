@@ -1,6 +1,14 @@
 import React, { useState } from 'react';
 import { useOffice } from '../../store/officeStore';
+import { createLiveAgent } from '../../services/liveHermesService';
+import type { AgentCoreDefinition } from '../../types/office';
 import { Sparkles, Plus, X, UserPlus, CheckCircle2 } from 'lucide-react';
+
+const MODEL_OPTIONS = ['cx/gpt-5.6-sol[1m]', 'anthropic/claude-test', 'Dahonoai/dahono/claude-opus-5'];
+const TOOL_OPTIONS = ['files', 'terminal', 'browser', 'github', 'delegation', 'kanban'];
+const MEMORY_SCOPES = ['read-write', 'read', 'none'] as const;
+const LEARNING_SOURCES = ['task-results', 'approved-feedback', 'hermes-skills'];
+const createId = (name: string) => `agent_${name.toLowerCase().replace(/[^a-z0-9]+/g, '_')}_${Date.now()}`;
 
 const SUGGESTED_ROLES = [
   'Content Specialist',
@@ -37,6 +45,18 @@ const AVAILABLE_SKILL_OPTIONS = [
 
 export const SkillRoleBuilderView: React.FC = () => {
   const { summonAgent, skills } = useOffice();
+  const [model, setModel] = useState<string>(MODEL_OPTIONS[0]);
+  const [soulName, setSoulName] = useState<string>('Adaptive Specialist');
+  const [mission, setMission] = useState<string>('Deliver verified work for the assigned department.');
+  const [learningEnabled, setLearningEnabled] = useState<boolean>(true);
+  const [approvalDefault, setApprovalDefault] = useState<'auto' | 'ask' | 'deny'>('ask');
+  const [workspace, setWorkspace] = useState<string>('/opt/data/Tenebiris Office');
+  const [memoryScope, setMemoryScope] = useState<typeof MEMORY_SCOPES[number]>('read-write');
+  const [outputCriteria, setOutputCriteria] = useState<string>('verified result, blockers, artifacts');
+  const [boundaries, setBoundaries] = useState<string>('production changes require approval');
+  const [fallbackModel, setFallbackModel] = useState<string>(MODEL_OPTIONS[1]);
+  const [toolPolicy, setToolPolicy] = useState<string[]>(TOOL_OPTIONS.slice(0, 3));
+  const [saving, setSaving] = useState<boolean>(false);
 
   const [name, setName] = useState<string>('NYX');
   const [role, setRole] = useState<string>('Content Specialist');
@@ -56,19 +76,39 @@ export const SkillRoleBuilderView: React.FC = () => {
     }
   };
 
-  const handleCreate = (e: React.FormEvent) => {
+  const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim()) return;
-
-    summonAgent({
-      name,
-      role,
-      department,
-      skills: selectedSkills,
-    });
-
-    setSuccessMessage(`Agent ${name.toUpperCase()} summoned to ${department}!`);
-    setTimeout(() => setSuccessMessage(null), 3000);
+    if (!name.trim() || saving) return;
+    setSaving(true);
+    const id = createId(name);
+    const definition: AgentCoreDefinition = {
+      id, name: name.toUpperCase(), agentNumber: 'NEW', department,
+      soul: {name: soulName, version: 1, principles: ['Verify assigned work', 'Learn from approved feedback'], communicationStyle: 'Direct and concise'},
+      role: {
+        id: role.toLowerCase().replace(/[^a-z0-9]+/g, '-'), name: role, version: 1, mission,
+        responsibilities: ['Execute assigned work', 'Report evidence'], jobTypes: [role],
+        requiredOutput: outputCriteria.split(',').map(item => item.trim()).filter(Boolean),
+        successCriteria: ['Output matches requested scope', 'Blockers are explicit'],
+        boundaries: boundaries.split(',').map(item => item.trim()).filter(Boolean),
+      },
+      modelBinding: {providerId: 'tenebiris9', primaryModelId: model, fallbackModelIds: [fallbackModel]},
+      skills: selectedSkills.map(skill => ({id: skill.toLowerCase().replace(/[^a-z0-9]+/g, '-'), name: skill, proficiency: 'Advanced'})),
+      toolPolicy: {allowed: toolPolicy, denied: ['credential-export'], approvalRequired: ['production-deploy']},
+      approvalPolicy: {default: approvalDefault, rules: ['production-deploy', 'credential-change']},
+      learningPolicy: {enabled: learningEnabled, allowedSources: LEARNING_SOURCES, requiresApproval: true, retention: 'agent'},
+      memoryPolicy: {profile: memoryScope, project: memoryScope, agent: memoryScope, task: memoryScope},
+      profile: 'tenebiris', sessionName: `${id}-main`, workspace, status: 'DRAFT',
+    };
+    try {
+      await createLiveAgent(definition);
+      summonAgent({name, role, department, skills: selectedSkills});
+      setSuccessMessage(`Agent ${name.toUpperCase()} saved with Soul v1 and Role v1.`);
+      setTimeout(() => setSuccessMessage(null), 3000);
+    } catch (error) {
+      setSuccessMessage(`Save failed: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -134,6 +174,22 @@ export const SkillRoleBuilderView: React.FC = () => {
             ))}
           </select>
         </div>
+
+        <div className="grid grid-cols-2 gap-2">
+          <label className="text-[10px] text-[#A69EA9]">Soul name<input value={soulName} onChange={e => setSoulName(e.target.value)} className="mt-1 w-full bg-[#14121C] border border-[#9E172C]/40 rounded px-2 py-1 text-[#E8E4E9]" /></label>
+          <label className="text-[10px] text-[#A69EA9]">Primary model<select value={model} onChange={e => setModel(e.target.value)} className="mt-1 w-full bg-[#14121C] border border-[#9E172C]/40 rounded px-2 py-1 text-[#E8E4E9]">{MODEL_OPTIONS.map(item => <option key={item}>{item}</option>)}</select></label>
+          <label className="text-[10px] text-[#A69EA9]">Fallback model<select value={fallbackModel} onChange={e => setFallbackModel(e.target.value)} className="mt-1 w-full bg-[#14121C] border border-[#9E172C]/40 rounded px-2 py-1 text-[#E8E4E9]">{MODEL_OPTIONS.map(item => <option key={item}>{item}</option>)}</select></label>
+          <label className="text-[10px] text-[#A69EA9]">Approval<select value={approvalDefault} onChange={e => setApprovalDefault(e.target.value as 'auto' | 'ask' | 'deny')} className="mt-1 w-full bg-[#14121C] border border-[#9E172C]/40 rounded px-2 py-1 text-[#E8E4E9]"><option value="ask">Ask</option><option value="auto">Auto</option><option value="deny">Deny</option></select></label>
+        </div>
+        <label className="block text-[10px] text-[#A69EA9]">Mission<input value={mission} onChange={e => setMission(e.target.value)} className="mt-1 w-full bg-[#14121C] border border-[#9E172C]/40 rounded px-2 py-1 text-[#E8E4E9]" /></label>
+        <label className="block text-[10px] text-[#A69EA9]">Required output<textarea value={outputCriteria} onChange={e => setOutputCriteria(e.target.value)} className="mt-1 w-full bg-[#14121C] border border-[#9E172C]/40 rounded px-2 py-1 text-[#E8E4E9]" rows={2} /></label>
+        <label className="block text-[10px] text-[#A69EA9]">Boundaries<textarea value={boundaries} onChange={e => setBoundaries(e.target.value)} className="mt-1 w-full bg-[#14121C] border border-[#9E172C]/40 rounded px-2 py-1 text-[#E8E4E9]" rows={2} /></label>
+        <div className="grid grid-cols-2 gap-2">
+          <label className="text-[10px] text-[#A69EA9]">Memory scope<select value={memoryScope} onChange={e => setMemoryScope(e.target.value as typeof memoryScope)} className="mt-1 w-full bg-[#14121C] border border-[#9E172C]/40 rounded px-2 py-1 text-[#E8E4E9]">{MEMORY_SCOPES.map(item => <option key={item}>{item}</option>)}</select></label>
+          <label className="text-[10px] text-[#A69EA9]">Workspace<input value={workspace} onChange={e => setWorkspace(e.target.value)} className="mt-1 w-full bg-[#14121C] border border-[#9E172C]/40 rounded px-2 py-1 text-[#E8E4E9]" /></label>
+        </div>
+        <div className="flex flex-wrap gap-1">{TOOL_OPTIONS.map(tool => <button type="button" key={tool} onClick={() => setToolPolicy(current => current.includes(tool) ? current.filter(item => item !== tool) : [...current, tool])} className={`px-2 py-0.5 border rounded text-[9px] ${toolPolicy.includes(tool) ? 'text-[#39C5CF] border-[#39C5CF]/50' : 'text-[#7A7280] border-[#9E172C]/30'}`}>{tool}</button>)}</div>
+        <label className="flex items-center gap-2 text-[10px] text-[#A69EA9]"><input type="checkbox" checked={learningEnabled} onChange={e => setLearningEnabled(e.target.checked)} /> Learning policy enabled; approved feedback required</label>
 
         {/* Skills Selection */}
         <div>
